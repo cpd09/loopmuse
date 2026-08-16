@@ -36,6 +36,7 @@ fun FolderSelectionScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .safeDrawingPadding()
             .padding(16.dp)
     ) {
         Row(

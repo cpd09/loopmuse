@@ -10,6 +10,7 @@ data class MusicFile(
     val duration: Long,
     val path: String,
     val folder: String,
+    val dateAdded: Long,
     val file: File
 ) {
     companion object {
@@ -23,6 +24,7 @@ data class MusicFile(
                 duration = 0L,
                 path = file.absolutePath,
                 folder = file.parent ?: "",
+                dateAdded = file.lastModified(),
                 file = file
             )
         }

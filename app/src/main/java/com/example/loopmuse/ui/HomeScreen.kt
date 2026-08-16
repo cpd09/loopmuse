@@ -19,10 +19,20 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Search
 import com.example.loopmuse.data.MusicFile
+import com.example.loopmuse.data.PlaybackScope
+import com.example.loopmuse.data.RepeatMode
 import com.example.loopmuse.service.MusicScanner
 import com.example.loopmuse.service.MusicServiceConnection
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.milliseconds
 
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
@@ -47,7 +57,30 @@ fun HomeScreen() {
     val isServiceConnected by musicServiceConnection.isConnected.collectAsStateWithLifecycle()
     val isPlaying by musicServiceConnection.isPlaying.collectAsStateWithLifecycle()
     val currentTrack by musicServiceConnection.currentTrack.collectAsStateWithLifecycle()
+    val repeatMode by musicServiceConnection.repeatMode.collectAsStateWithLifecycle()
+    val playbackScope by musicServiceConnection.playbackScope.collectAsStateWithLifecycle()
     val songCounts by musicServiceConnection.songCounts.collectAsStateWithLifecycle()
+
+    var showQueueEndedDialog by remember { mutableStateOf(false) }
+    var showSearchDialog by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+    var recentLimit by remember { mutableStateOf(30) }
+
+    val allSongs = remember(isServiceConnected) { musicServiceConnection.getAllSongs() }
+    val filteredSongs by remember {
+        derivedStateOf {
+            if (searchQuery.isEmpty()) allSongs
+            else allSongs.filter { it.title.contains(searchQuery, ignoreCase = true) || it.artist.contains(searchQuery, ignoreCase = true) }
+        }
+    }
+
+    LaunchedEffect(isServiceConnected) {
+        if (isServiceConnected) {
+            musicServiceConnection.queueEnded.collectLatest {
+                showQueueEndedDialog = true
+            }
+        }
+    }
     
     // Stable derived state to prevent unnecessary recompositions
     val hasPermissions by remember {
@@ -69,10 +102,8 @@ fun HomeScreen() {
             buttonStateTimer = System.currentTimeMillis()
         } else if (lastKnownPlayingState && currentTrack != null) {
             // If was playing and we have a track, wait briefly before hiding buttons
-            kotlinx.coroutines.delay(500) // Wait 500ms
-            if (!isPlaying) { // Check again after delay
-                lastKnownPlayingState = false
-            }
+            kotlinx.coroutines.delay(500.milliseconds) // Wait 500ms
+            lastKnownPlayingState = false
         } else {
             lastKnownPlayingState = false
         }
@@ -145,12 +176,15 @@ fun HomeScreen() {
         )
     } else {
         Surface(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .safeDrawingPadding(),
             color = MaterialTheme.colorScheme.background
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
                     .padding(24.dp),
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally
@@ -166,6 +200,56 @@ fun HomeScreen() {
                 Spacer(modifier = Modifier.height(32.dp))
                 
                 if (isReadyToPlay) {
+                    // Playback Scope & Mode Selection
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        FilterChip(
+                            selected = playbackScope == PlaybackScope.ALL,
+                            onClick = { musicServiceConnection.setPlaybackScope(PlaybackScope.ALL) },
+                            label = { Text("All Songs") }
+                        )
+                        FilterChip(
+                            selected = playbackScope == PlaybackScope.RECENT,
+                            onClick = { musicServiceConnection.setPlaybackScope(PlaybackScope.RECENT) },
+                            label = { Text("Recent ($recentLimit)") }
+                        )
+                    }
+
+                    if (playbackScope == PlaybackScope.RECENT) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            listOf(10, 30, 50).forEach { limit ->
+                                OutlinedIconToggleButton(
+                                    checked = recentLimit == limit,
+                                    onCheckedChange = { 
+                                        recentLimit = limit
+                                        musicServiceConnection.setRecentLimit(limit)
+                                    },
+                                    modifier = Modifier.padding(horizontal = 4.dp)
+                                ) {
+                                    Text(limit.toString())
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        RepeatModeButton(RepeatMode.SHUFFLE, "Shuffle", repeatMode, musicServiceConnection)
+                        RepeatModeButton(RepeatMode.SEQUENTIAL, "Sequential", repeatMode, musicServiceConnection)
+                        RepeatModeButton(RepeatMode.SINGLE_REPEAT, "1-Repeat", repeatMode, musicServiceConnection)
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
                     // Current track display with minimum size to prevent layout shifts
                     Card(
                         modifier = Modifier
@@ -270,6 +354,10 @@ fun HomeScreen() {
                                 Text("⏭️ Next")
                             }
                         }
+
+                        IconButton(onClick = { showSearchDialog = true }) {
+                            Icon(Icons.Default.Search, contentDescription = "Search")
+                        }
                     }
                     
                     Spacer(modifier = Modifier.height(24.dp))
@@ -365,4 +453,83 @@ fun HomeScreen() {
             }
         }
     }
+
+    if (showQueueEndedDialog) {
+        AlertDialog(
+            onDismissRequest = { showQueueEndedDialog = false },
+            title = { Text("Playback Finished") },
+            text = { Text("Queue has ended. What would you like to do next?") },
+            confirmButton = {},
+            dismissButton = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Button(
+                        onClick = {
+                            musicServiceConnection.setRepeatMode(RepeatMode.SHUFFLE)
+                            coroutineScope.launch { musicServiceConnection.playRandomUnplayedSong() }
+                            showQueueEndedDialog = false
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("New Shuffle") }
+                    Button(
+                        onClick = {
+                            musicServiceConnection.setRepeatMode(RepeatMode.SEQUENTIAL)
+                            coroutineScope.launch { musicServiceConnection.playRandomUnplayedSong() }
+                            showQueueEndedDialog = false
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Sequential Play") }
+                    Button(
+                        onClick = {
+                            showSearchDialog = true
+                            showQueueEndedDialog = false
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Search & Select") }
+                }
+            }
+        )
+    }
+
+    if (showSearchDialog) {
+        AlertDialog(
+            onDismissRequest = { showSearchDialog = false },
+            title = { Text("Select Song") },
+            text = {
+                Column {
+                    TextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder = { Text("Search songs...") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    LazyColumn(modifier = Modifier.height(300.dp)) {
+                        items(filteredSongs) { song ->
+                            TextButton(
+                                onClick = {
+                                    musicServiceConnection.playTrackById(song.id)
+                                    showSearchDialog = false
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("${song.title} - ${song.artist}", maxLines = 1)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showSearchDialog = false }) { Text("Close") }
+            }
+        )
+    }
+}
+
+@Composable
+fun RepeatModeButton(mode: RepeatMode, label: String, currentMode: RepeatMode, connection: MusicServiceConnection) {
+    FilterChip(
+        selected = currentMode == mode,
+        onClick = { connection.setRepeatMode(mode) },
+        label = { Text(label) }
+    )
 }

@@ -14,9 +14,12 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.example.loopmuse.MainActivity
 import com.example.loopmuse.data.MusicFile
-import com.example.loopmuse.data.PlaybackHistory
+import com.example.loopmuse.data.PlaybackScope
+import com.example.loopmuse.data.RepeatMode
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 
 class MusicPlaybackService : Service() {
@@ -39,7 +42,7 @@ class MusicPlaybackService : Service() {
     private var lastScanTime: Long = 0
     private val scanCacheTimeout = 30000L // 30 seconds
     
-    private lateinit var playbackHistory: PlaybackHistory
+    private lateinit var queueManager: PlaybackQueueManager
     private lateinit var musicScanner: MusicScanner
     private lateinit var mediaSession: MediaSessionCompat
     private lateinit var notificationManager: NotificationManagerCompat
@@ -51,6 +54,15 @@ class MusicPlaybackService : Service() {
     
     private val _currentTrack = MutableStateFlow<MusicFile?>(null)
     val currentTrack: StateFlow<MusicFile?> = _currentTrack
+
+    private val _repeatMode = MutableStateFlow(RepeatMode.SHUFFLE)
+    val repeatMode: StateFlow<RepeatMode> = _repeatMode
+
+    private val _playbackScope = MutableStateFlow(PlaybackScope.ALL)
+    val playbackScope: StateFlow<PlaybackScope> = _playbackScope
+
+    private val _queueEnded = MutableSharedFlow<Unit>()
+    val queueEnded: SharedFlow<Unit> = _queueEnded
     
     private val _songCounts = MutableStateFlow("Loading...")
     val songCounts: StateFlow<String> = _songCounts
@@ -62,9 +74,12 @@ class MusicPlaybackService : Service() {
     override fun onCreate() {
         super.onCreate()
         
-        playbackHistory = PlaybackHistory(this)
+        queueManager = PlaybackQueueManager(this)
         musicScanner = MusicScanner(this)
         notificationManager = NotificationManagerCompat.from(this)
+        
+        _repeatMode.value = queueManager.repeatMode
+        _playbackScope.value = queueManager.currentScope
         
         createNotificationChannel()
         initializeMediaSession()
@@ -131,8 +146,6 @@ class MusicPlaybackService : Service() {
         }
     }
     
-    fun getSelectedFolders(): List<String> = selectedFolders
-    
     fun setSelectedFolders(folders: List<String>) {
         val foldersChanged = selectedFolders != folders
         val isFirstTimeSet = _songCounts.value == "Loading..."
@@ -146,7 +159,7 @@ class MusicPlaybackService : Service() {
             }
         }
     }
-    
+
     fun forceUpdateSongCounts() {
         serviceScope.launch {
             updateSongCounts()
@@ -169,37 +182,64 @@ class MusicPlaybackService : Service() {
             withContext(Dispatchers.IO) {
                 val songs = musicScanner.scanMusicFiles(selectedFolders)
                 cachedAllSongs = songs
+                queueManager.setAllSongs(songs)
                 lastScanTime = currentTime
                 songs
             }
         }
     }
     
-    private suspend fun updateSongCounts() {
+    private fun updateSongCounts() {
         try {
-            val total = getTotalSongsCount()
-            val unplayed = getUnplayedCount()
-            _songCounts.value = "$unplayed unplayed / $total total songs"
+            val songs = runBlocking { getCachedOrScanSongs() }
+            val total = songs.size
+            _songCounts.value = if (queueManager.currentScope == PlaybackScope.ALL) {
+                "$total total songs"
+            } else {
+                "Recent ${queueManager.getRecentSongs().size} songs"
+            }
         } catch (e: Exception) {
             _songCounts.value = "Error loading song counts"
         }
     }
     
-    suspend fun playRandomUnplayedSong(): Boolean {
-        val allSongs = getCachedOrScanSongs()
-        val unplayedSongs = playbackHistory.getUnplayedSongs(allSongs)
-        
-        if (unplayedSongs.isEmpty()) {
-            if (allSongs.isEmpty()) {
-                return false
-            }
-            playbackHistory.clearHistory()
-            return playRandomUnplayedSong()
+    fun playRandomUnplayedSong(): Boolean {
+        // This is now "Start Playback"
+        val track = queueManager.getCurrentTrack() ?: queueManager.getNextTrack()
+        return if (track != null) {
+            playSong(track)
+        } else {
+            false
         }
-        
-        val randomSong = unplayedSongs.random()
-        return playSong(randomSong)
     }
+    
+    fun setRepeatMode(mode: RepeatMode) {
+        queueManager.resetActiveQueue(mode)
+        _repeatMode.value = mode
+    }
+
+    fun setPlaybackScope(scope: PlaybackScope) {
+        queueManager.currentScope = scope
+        _playbackScope.value = scope
+        serviceScope.launch {
+            updateSongCounts()
+        }
+    }
+
+    fun setRecentLimit(limit: Int) {
+        queueManager.setRecentLimit(limit)
+        serviceScope.launch {
+            updateSongCounts()
+        }
+    }
+
+    fun playTrackById(id: String) {
+        queueManager.playTrackById(id)?.let {
+            playSong(it)
+        }
+    }
+
+    fun getRecentSongs(): List<MusicFile> = queueManager.getRecentSongs()
     
     private fun playSong(musicFile: MusicFile): Boolean {
         return try {
@@ -227,11 +267,17 @@ class MusicPlaybackService : Service() {
                 }
                 setOnCompletionListener {
                     _isPlaying.value = false
-                    playbackHistory.addToHistory(musicFile)
                     serviceScope.launch {
-                        // 즉시 다음 곡 재생하고, 카운트 업데이트는 백그라운드에서 처리
-                        playRandomUnplayedSong()
-                        // 카운트 업데이트를 별도 코루틴에서 처리
+                        val nextTrack = queueManager.getNextTrack()
+                        if (nextTrack != null) {
+                            playSong(nextTrack)
+                        } else {
+                            // End of queue!
+                            _queueEnded.emit(Unit)
+                            @Suppress("DEPRECATION")
+                            stopForeground(false)
+                            updateNotification()
+                        }
                         launch {
                             updateSongCounts()
                         }
@@ -274,12 +320,12 @@ class MusicPlaybackService : Service() {
     
     private fun playNext() {
         serviceScope.launch {
-            currentSong?.let { song ->
-                playbackHistory.addToHistory(song)
+            val nextTrack = queueManager.skipToNext()
+            if (nextTrack != null) {
+                playSong(nextTrack)
+            } else {
+                _queueEnded.emit(Unit)
             }
-            // 즉시 다음 곡 재생하고, 카운트 업데이트는 백그라운드에서 처리
-            playRandomUnplayedSong()
-            // 카운트 업데이트를 별도 코루틴에서 처리하여 재생 지연 방지
             launch {
                 updateSongCounts()
             }
@@ -299,18 +345,9 @@ class MusicPlaybackService : Service() {
         _currentTrack.value = null
     }
     
-    private fun cleanupMediaPlayerOnly() {
-        mediaPlayer?.let { player ->
-            if (player.isPlaying) {
-                player.stop()
-            }
-            player.release()
-        }
-        mediaPlayer = null
-    }
-    
     private fun stopService() {
         stopCurrentSong()
+        @Suppress("DEPRECATION")
         stopForeground(true)
         stopSelf()
     }
@@ -419,25 +456,35 @@ class MusicPlaybackService : Service() {
     
     private fun updateNotification() {
         if (currentSong != null) {
-            notificationManager.notify(NOTIFICATION_ID, createNotification())
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                if (androidx.core.content.ContextCompat.checkSelfPermission(
+                        this,
+                        android.Manifest.permission.POST_NOTIFICATIONS
+                    ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                ) {
+                    notificationManager.notify(NOTIFICATION_ID, createNotification())
+                }
+            } else {
+                notificationManager.notify(NOTIFICATION_ID, createNotification())
+            }
         }
     }
     
     fun clearPlaybackHistory() {
-        playbackHistory.clearHistory()
-        // 이력이 초기화되면 곡 수를 업데이트
+        queueManager.resetActiveQueue(queueManager.repeatMode)
         serviceScope.launch {
             updateSongCounts()
         }
     }
     
-    suspend fun getUnplayedCount(): Int {
-        val allSongs = getCachedOrScanSongs()
-        return playbackHistory.getUnplayedSongs(allSongs).size
+    fun getUnplayedCount(): Int {
+        // Using "unplayed" concept as "songs remaining in current queue"
+        return 0 // Simplified for now, or could be (queue.size - index)
     }
     
-    suspend fun getTotalSongsCount(): Int {
-        val allSongs = getCachedOrScanSongs()
-        return allSongs.size
+    fun getTotalSongsCount(): Int {
+        return cachedAllSongs.size
     }
+
+    fun getAllSongs(): List<MusicFile> = cachedAllSongs
 }

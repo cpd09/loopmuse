@@ -6,7 +6,11 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
 import com.example.loopmuse.data.MusicFile
+import com.example.loopmuse.data.PlaybackScope
+import com.example.loopmuse.data.RepeatMode
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
@@ -23,6 +27,15 @@ class MusicServiceConnection(private val context: Context) {
     
     private val _currentTrack = MutableStateFlow<MusicFile?>(null)
     val currentTrack: StateFlow<MusicFile?> = _currentTrack
+
+    private val _repeatMode = MutableStateFlow(RepeatMode.SHUFFLE)
+    val repeatMode: StateFlow<RepeatMode> = _repeatMode
+
+    private val _playbackScope = MutableStateFlow(PlaybackScope.ALL)
+    val playbackScope: StateFlow<PlaybackScope> = _playbackScope
+
+    private val _queueEnded = MutableSharedFlow<Unit>()
+    val queueEnded: SharedFlow<Unit> = _queueEnded
     
     private val _songCounts = MutableStateFlow("Loading...")
     val songCounts: StateFlow<String> = _songCounts
@@ -45,6 +58,21 @@ class MusicServiceConnection(private val context: Context) {
                     launch {
                         service.currentTrack.collect { track ->
                             _currentTrack.value = track
+                        }
+                    }
+                    launch {
+                        service.repeatMode.collect { mode ->
+                            _repeatMode.value = mode
+                        }
+                    }
+                    launch {
+                        service.playbackScope.collect { scope ->
+                            _playbackScope.value = scope
+                        }
+                    }
+                    launch {
+                        service.queueEnded.collect {
+                            _queueEnded.emit(Unit)
                         }
                     }
                     launch {
@@ -113,12 +141,24 @@ class MusicServiceConnection(private val context: Context) {
     fun clearPlaybackHistory() {
         musicService?.clearPlaybackHistory()
     }
-    
-    suspend fun getUnplayedCount(): Int {
-        return musicService?.getUnplayedCount() ?: 0
+
+    fun setRepeatMode(mode: RepeatMode) {
+        musicService?.setRepeatMode(mode)
     }
-    
-    suspend fun getTotalSongsCount(): Int {
-        return musicService?.getTotalSongsCount() ?: 0
+
+    fun setPlaybackScope(scope: PlaybackScope) {
+        musicService?.setPlaybackScope(scope)
+    }
+
+    fun setRecentLimit(limit: Int) {
+        musicService?.setRecentLimit(limit)
+    }
+
+    fun playTrackById(id: String) {
+        musicService?.playTrackById(id)
+    }
+
+    fun getAllSongs(): List<MusicFile> {
+        return musicService?.getAllSongs() ?: emptyList()
     }
 }
