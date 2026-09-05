@@ -23,6 +23,9 @@ class PlaybackQueueManager(context: Context) {
     private var recentCurrentIndex: Int = -1
     private var recentLimit: Int = 30
 
+    // Global Played History (across scopes)
+    private var playedSongIds: MutableSet<String> = mutableSetOf()
+
     var currentScope: PlaybackScope = PlaybackScope.ALL
     var repeatMode: RepeatMode = RepeatMode.SHUFFLE
 
@@ -73,7 +76,6 @@ class PlaybackQueueManager(context: Context) {
 
         if (scope == PlaybackScope.ALL) {
             allQueue = updatedQueue
-            // Adjust current index if necessary
             if (allCurrentIndex >= allQueue.size) allCurrentIndex = allQueue.size - 1
         } else {
             recentQueue = updatedQueue
@@ -87,14 +89,12 @@ class PlaybackQueueManager(context: Context) {
             .take(recentLimit)
             .associateBy { it.id }
             
-        // For RECENT scope, we filter the queue to only include these recent songs
         updateQueue(PlaybackScope.RECENT, recentSongs, oldSongsMap)
     }
 
     fun setRecentLimit(limit: Int) {
         if (recentLimit != limit) {
             recentLimit = limit
-            // Reset recent queue
             val recentSongs = allSongs
                 .sortedByDescending { it.dateAdded }
                 .take(recentLimit)
@@ -109,29 +109,82 @@ class PlaybackQueueManager(context: Context) {
         }
     }
 
+    fun addToHistory(id: String) {
+        playedSongIds.add(id)
+        saveState()
+    }
+
+    fun isPlayed(id: String): Boolean = playedSongIds.contains(id)
+
+    fun getPlayedSongIds(): Set<String> = playedSongIds.toSet()
+
+    fun clearAllHistory() {
+        playedSongIds.clear()
+        allCurrentIndex = -1
+        recentCurrentIndex = -1
+        saveState()
+    }
+
+    private fun checkAndAutoResetHistory() {
+        val currentQueue = getActiveQueue()
+        if (currentQueue.isEmpty()) return
+        
+        // If all songs in current queue are in history, clear history for this cycle
+        val unplayedInQueue = currentQueue.filter { !playedSongIds.contains(it) }
+        if (unplayedInQueue.isEmpty()) {
+            // Cycle finished. Clear history.
+            playedSongIds.clear()
+            // Reset current indices to start over
+            allCurrentIndex = -1
+            recentCurrentIndex = -1
+            saveState()
+        }
+    }
+
     fun getNextTrack(): MusicFile? {
+        if (repeatMode == RepeatMode.SINGLE_REPEAT) {
+            return getCurrentTrack() ?: findFirstUnplayed()
+        }
+
+        // Smart Skip logic: Find the next track in queue that hasn't been played
         val queue = getActiveQueue()
         var index = getActiveIndex()
 
         if (queue.isEmpty()) return null
 
-        when (repeatMode) {
-            RepeatMode.SINGLE_REPEAT -> {
-                // Stay on current index
-                if (index == -1) index = 0
-            }
-            RepeatMode.SHUFFLE, RepeatMode.SEQUENTIAL -> {
-                index++
-                if (index >= queue.size) {
-                    // End of queue reached - Signal UI (handled in Service)
-                    return null
-                }
+        // Try to find next unplayed
+        var foundIndex = -1
+        for (i in (index + 1) until queue.size) {
+            if (!playedSongIds.contains(queue[i])) {
+                foundIndex = i
+                break
             }
         }
 
-        setActiveIndex(index)
-        saveState()
-        return allSongs.find { it.id == queue[index] }
+        return if (foundIndex != -1) {
+            setActiveIndex(foundIndex)
+            saveState()
+            allSongs.find { it.id == queue[foundIndex] }
+        } else {
+            // End of unplayed songs in this queue
+            checkAndAutoResetHistory()
+            // After reset, try to find from the beginning
+            findFirstUnplayed()
+        }
+    }
+
+    private fun findFirstUnplayed(): MusicFile? {
+        val queue = getActiveQueue()
+        if (queue.isEmpty()) return null
+        
+        for (i in queue.indices) {
+            if (!playedSongIds.contains(queue[i])) {
+                setActiveIndex(i)
+                saveState()
+                return allSongs.find { it.id == queue[i] }
+            }
+        }
+        return null
     }
 
     fun getCurrentTrack(): MusicFile? {
@@ -144,20 +197,8 @@ class PlaybackQueueManager(context: Context) {
     }
 
     fun skipToNext(): MusicFile? {
-        val queue = getActiveQueue()
-        var index = getActiveIndex()
-        
-        if (queue.isEmpty()) return null
-        
-        index++
-        if (index >= queue.size) {
-            // End reached - return null to signal option dialog
-            return null
-        }
-        
-        setActiveIndex(index)
-        saveState()
-        return allSongs.find { it.id == queue[index] }
+        // Explicit skip button pressed
+        return getNextTrack()
     }
 
     fun playTrackById(id: String): MusicFile? {
@@ -165,6 +206,7 @@ class PlaybackQueueManager(context: Context) {
         val index = queue.indexOf(id)
         if (index != -1) {
             setActiveIndex(index)
+            // Note: History is added when song starts/completes in Service
             saveState()
             return allSongs.find { it.id == id }
         }
@@ -208,6 +250,7 @@ class PlaybackQueueManager(context: Context) {
             putInt("recent_limit", recentLimit)
             putString("scope", currentScope.name)
             putString("repeat_mode", repeatMode.name)
+            putStringSet("played_history", playedSongIds)
             apply()
         }
     }
@@ -220,9 +263,12 @@ class PlaybackQueueManager(context: Context) {
         recentLimit = prefs.getInt("recent_limit", 30)
         currentScope = PlaybackScope.valueOf(prefs.getString("scope", PlaybackScope.ALL.name)!!)
         repeatMode = RepeatMode.valueOf(prefs.getString("repeat_mode", RepeatMode.SHUFFLE.name)!!)
+        playedSongIds = prefs.getStringSet("played_history", emptySet())?.toMutableSet() ?: mutableSetOf()
     }
     
     fun getRecentSongs(): List<MusicFile> {
         return allSongs.sortedByDescending { it.dateAdded }.take(recentLimit)
     }
+
+    fun getAllSongs(): List<MusicFile> = allSongs
 }

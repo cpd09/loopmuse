@@ -66,6 +66,9 @@ class MusicPlaybackService : Service() {
 
     private val _queueEnded = MutableSharedFlow<Unit>()
     val queueEnded: SharedFlow<Unit> = _queueEnded
+
+    private val _playedSongIds = MutableStateFlow<Set<String>>(emptySet())
+    val playedSongIds: StateFlow<Set<String>> = _playedSongIds
     
     private val _songCounts = MutableStateFlow("Loading...")
     val songCounts: StateFlow<String> = _songCounts
@@ -83,6 +86,7 @@ class MusicPlaybackService : Service() {
         
         _repeatMode.value = queueManager.repeatMode
         _playbackScope.value = queueManager.currentScope
+        _playedSongIds.value = queueManager.getPlayedSongIds()
         
         loadSelectedItems()
         
@@ -285,11 +289,19 @@ class MusicPlaybackService : Service() {
                 setOnPreparedListener { player ->
                     player.start()
                     _isPlaying.value = true
+                    currentSong?.let { 
+                        queueManager.addToHistory(it.id)
+                        updateHistory()
+                    }
                     updateMediaSession()
                     startForeground(NOTIFICATION_ID, createNotification())
                 }
                 setOnCompletionListener {
                     _isPlaying.value = false
+                    currentSong?.let { 
+                        queueManager.addToHistory(it.id) 
+                        updateHistory()
+                    }
                     serviceScope.launch {
                         val nextTrack = queueManager.getNextTrack()
                         if (nextTrack != null) {
@@ -494,11 +506,18 @@ class MusicPlaybackService : Service() {
     }
     
     fun clearPlaybackHistory() {
-        queueManager.resetActiveQueue(queueManager.repeatMode)
+        queueManager.clearAllHistory()
+        _playedSongIds.value = emptySet()
         serviceScope.launch {
             updateSongCounts()
         }
     }
+
+    private fun updateHistory() {
+        _playedSongIds.value = queueManager.getPlayedSongIds()
+    }
+
+    fun isPlayed(id: String): Boolean = queueManager.isPlayed(id)
     
     fun getUnplayedCount(): Int {
         // Using "unplayed" concept as "songs remaining in current queue"
@@ -509,5 +528,11 @@ class MusicPlaybackService : Service() {
         return cachedAllSongs.size
     }
 
-    fun getAllSongs(): List<MusicFile> = cachedAllSongs
+    fun getAllSongs(): List<MusicFile> {
+        return if (queueManager.currentScope == PlaybackScope.ALL) {
+            cachedAllSongs
+        } else {
+            queueManager.getRecentSongs()
+        }
+    }
 }

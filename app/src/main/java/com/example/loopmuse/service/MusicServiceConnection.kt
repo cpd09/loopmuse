@@ -32,6 +32,9 @@ class MusicServiceConnection(private val context: Context) {
     private val _allSongs = MutableStateFlow<List<MusicFile>>(emptyList())
     val allSongs: StateFlow<List<MusicFile>> = _allSongs
 
+    private val _playedSongIds = MutableStateFlow<Set<String>>(emptySet())
+    val playedSongIds: StateFlow<Set<String>> = _playedSongIds
+
     private val _repeatMode = MutableStateFlow(RepeatMode.SHUFFLE)
     val repeatMode: StateFlow<RepeatMode> = _repeatMode
 
@@ -62,6 +65,11 @@ class MusicServiceConnection(private val context: Context) {
                     launch {
                         service.currentTrack.collect { track ->
                             _currentTrack.value = track
+                        }
+                    }
+                    launch {
+                        service.playedSongIds.collect { ids ->
+                            _playedSongIds.value = ids
                         }
                     }
                     launch {
@@ -151,6 +159,8 @@ class MusicServiceConnection(private val context: Context) {
     fun clearPlaybackHistory() {
         musicService?.clearPlaybackHistory()
     }
+
+    fun isPlayed(id: String): Boolean = musicService?.isPlayed(id) ?: false
 
     fun setRepeatMode(mode: RepeatMode) {
         musicService?.setRepeatMode(mode)
