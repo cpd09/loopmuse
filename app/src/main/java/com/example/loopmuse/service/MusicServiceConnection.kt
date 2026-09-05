@@ -8,6 +8,7 @@ import android.os.IBinder
 import com.example.loopmuse.data.MusicFile
 import com.example.loopmuse.data.PlaybackScope
 import com.example.loopmuse.data.RepeatMode
+import com.example.loopmuse.data.SelectionItem
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -27,6 +28,9 @@ class MusicServiceConnection(private val context: Context) {
     
     private val _currentTrack = MutableStateFlow<MusicFile?>(null)
     val currentTrack: StateFlow<MusicFile?> = _currentTrack
+
+    private val _allSongs = MutableStateFlow<List<MusicFile>>(emptyList())
+    val allSongs: StateFlow<List<MusicFile>> = _allSongs
 
     private val _repeatMode = MutableStateFlow(RepeatMode.SHUFFLE)
     val repeatMode: StateFlow<RepeatMode> = _repeatMode
@@ -78,6 +82,8 @@ class MusicServiceConnection(private val context: Context) {
                     launch {
                         service.songCounts.collect { counts ->
                             _songCounts.value = counts
+                            // Update allSongs when counts change (implying a scan finished)
+                            _allSongs.value = service.getAllSongs()
                         }
                     }
                 }
@@ -105,8 +111,12 @@ class MusicServiceConnection(private val context: Context) {
         }
     }
     
-    fun setSelectedFolders(folders: List<String>) {
-        musicService?.setSelectedFolders(folders)
+    fun setSelectedItems(items: List<SelectionItem>) {
+        musicService?.setSelectedItems(items)
+    }
+
+    fun getSelectedItems(): List<SelectionItem> {
+        return musicService?.getSelectedItems() ?: emptyList()
     }
     
     fun refreshSongCounts() {
