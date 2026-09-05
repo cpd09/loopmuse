@@ -16,6 +16,9 @@ import com.example.loopmuse.MainActivity
 import com.example.loopmuse.data.MusicFile
 import com.example.loopmuse.data.PlaybackScope
 import com.example.loopmuse.data.RepeatMode
+import com.example.loopmuse.data.SelectionItem
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -35,7 +38,7 @@ class MusicPlaybackService : Service() {
     private val binder = LocalBinder()
     private var mediaPlayer: MediaPlayer? = null
     private var currentSong: MusicFile? = null
-    private var selectedFolders: List<String> = emptyList()
+    private var selectedItems: List<SelectionItem> = emptyList()
     
     // Cache for performance optimization
     private var cachedAllSongs: List<MusicFile> = emptyList()
@@ -81,8 +84,23 @@ class MusicPlaybackService : Service() {
         _repeatMode.value = queueManager.repeatMode
         _playbackScope.value = queueManager.currentScope
         
+        loadSelectedItems()
+        
         createNotificationChannel()
         initializeMediaSession()
+    }
+
+    private fun loadSelectedItems() {
+        val prefs = getSharedPreferences("music_prefs", Context.MODE_PRIVATE)
+        val json = prefs.getString("selected_items", null)
+        if (json != null) {
+            selectedItems = Gson().fromJson(json, object : TypeToken<List<SelectionItem>>() {}.type)
+        }
+    }
+
+    private fun saveSelectedItems() {
+        val prefs = getSharedPreferences("music_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putString("selected_items", Gson().toJson(selectedItems)).apply()
     }
     
     override fun onBind(intent: Intent): IBinder {
@@ -146,12 +164,13 @@ class MusicPlaybackService : Service() {
         }
     }
     
-    fun setSelectedFolders(folders: List<String>) {
-        val foldersChanged = selectedFolders != folders
+    fun setSelectedItems(items: List<SelectionItem>) {
+        val itemsChanged = selectedItems != items
         val isFirstTimeSet = _songCounts.value == "Loading..."
-        selectedFolders = folders
+        selectedItems = items
+        saveSelectedItems()
         
-        if (foldersChanged || isFirstTimeSet) {
+        if (itemsChanged || isFirstTimeSet) {
             // 폴더가 변경되거나 최초 설정 시 캐시 무효화 및 곡 수 업데이트
             invalidateCache()
             serviceScope.launch {
@@ -159,6 +178,8 @@ class MusicPlaybackService : Service() {
             }
         }
     }
+
+    fun getSelectedItems(): List<SelectionItem> = selectedItems
 
     fun forceUpdateSongCounts() {
         serviceScope.launch {
@@ -180,7 +201,7 @@ class MusicPlaybackService : Service() {
         } else {
             // Scan and cache new results
             withContext(Dispatchers.IO) {
-                val songs = musicScanner.scanMusicFiles(selectedFolders)
+                val songs = musicScanner.scanMusicFiles(selectedItems)
                 cachedAllSongs = songs
                 queueManager.setAllSongs(songs)
                 lastScanTime = currentTime
@@ -190,16 +211,18 @@ class MusicPlaybackService : Service() {
     }
     
     private fun updateSongCounts() {
-        try {
-            val songs = runBlocking { getCachedOrScanSongs() }
-            val total = songs.size
-            _songCounts.value = if (queueManager.currentScope == PlaybackScope.ALL) {
-                "$total total songs"
-            } else {
-                "Recent ${queueManager.getRecentSongs().size} songs"
+        serviceScope.launch {
+            try {
+                val songs = getCachedOrScanSongs()
+                val total = songs.size
+                _songCounts.value = if (queueManager.currentScope == PlaybackScope.ALL) {
+                    "$total total songs"
+                } else {
+                    "Recent ${queueManager.getRecentSongs().size} songs"
+                }
+            } catch (e: Exception) {
+                _songCounts.value = "Error loading song counts"
             }
-        } catch (e: Exception) {
-            _songCounts.value = "Error loading song counts"
         }
     }
     

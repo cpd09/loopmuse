@@ -3,6 +3,7 @@ package com.example.loopmuse.service
 import android.content.Context
 import android.os.Environment
 import com.example.loopmuse.data.MusicFile
+import com.example.loopmuse.data.SelectionItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -11,28 +12,34 @@ class MusicScanner(private val context: Context) {
     
     private val supportedFormats = listOf("mp3", "m4a", "wav", "flac", "ogg")
     
-    suspend fun scanMusicFiles(selectedFolders: List<String> = emptyList()): List<MusicFile> = withContext(Dispatchers.IO) {
+    suspend fun scanMusicFiles(selectedItems: List<SelectionItem> = emptyList()): List<MusicFile> = withContext(Dispatchers.IO) {
         val musicFiles = mutableListOf<MusicFile>()
         
-        val foldersToScan = if (selectedFolders.isEmpty()) {
-            getDefaultMusicDirectories()
+        if (selectedItems.isEmpty()) {
+            getDefaultMusicDirectories().forEach { folder ->
+                scanDirectory(folder, musicFiles, true)
+            }
         } else {
-            selectedFolders.map { File(it) }
-        }
-        
-        foldersToScan.forEach { folder ->
-            if (folder.exists() && folder.isDirectory) {
-                scanDirectory(folder, musicFiles)
+            selectedItems.forEach { item ->
+                val file = File(item.path)
+                if (file.exists()) {
+                    if (item.isFolder && file.isDirectory) {
+                        scanDirectory(file, musicFiles, item.includeSubfolders)
+                    } else if (!item.isFolder && file.isFile && isSupportedAudioFile(file)) {
+                        musicFiles.add(MusicFile.fromFile(file))
+                    }
+                }
             }
         }
         
-        musicFiles
+        // Remove duplicates if any (e.g. file selected both individually and via folder)
+        musicFiles.distinctBy { it.path }
     }
     
-    private fun scanDirectory(directory: File, musicFiles: MutableList<MusicFile>) {
+    private fun scanDirectory(directory: File, musicFiles: MutableList<MusicFile>, includeSubfolders: Boolean) {
         directory.listFiles()?.forEach { file ->
             when {
-                file.isDirectory -> scanDirectory(file, musicFiles)
+                file.isDirectory && includeSubfolders -> scanDirectory(file, musicFiles, true)
                 file.isFile && isSupportedAudioFile(file) -> {
                     musicFiles.add(MusicFile.fromFile(file))
                 }

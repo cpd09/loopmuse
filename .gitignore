@@ -18,6 +18,7 @@ out/
 # Gradle files
 .gradle/
 build/
+app/build/
 
 # Local configuration file (sdk path, etc)
 local.properties
@@ -34,8 +35,10 @@ proguard/
 # Android Studio captures folder
 captures/
 
-# IntelliJ IDEA
+# IntelliJ IDEA (Optimized for Mac/Windows cross-work)
+.idea/
 *.iml
+*.iws
 .idea/workspace.xml
 .idea/tasks.xml
 .idea/gradle.xml
@@ -46,7 +49,13 @@ captures/
 .idea/modules.xml
 .idea/navEditor.xml
 
-# Keystore files (uncomment if you don't want to track them)
+# Mandatory IDE settings to KEEP (un-ignore)
+!.idea/vcs.xml
+!.idea/codeStyles/
+!.idea/copyright/
+!.idea/compiler.xml
+
+# Keystore files
 #*.jks
 #*.keystore
 
@@ -54,26 +63,12 @@ captures/
 .cxx/
 .externalNativeBuild/
 
-# Google Services (uncomment if not using Firebase)
-# google-services.json
-
-# Freeline
-freeline.py
-freeline/
-freeline_project_description.json
-
 # fastlane
 fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots
 fastlane/test_output
 fastlane/readme.md
-
-# Version control
-vcs.xml
-
-# Android Profiling
-*.hprof
 
 # OS generated files
 .DS_Store
@@ -83,6 +78,7 @@ vcs.xml
 .Trashes
 ehthumbs.db
 Thumbs.db
+desktop.ini
 
 # IDE files
 .vscode/
