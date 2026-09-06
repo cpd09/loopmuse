@@ -21,7 +21,7 @@ class PlaybackQueueManager(context: Context) {
     // State for RECENT scope
     private var recentQueue: List<String> = emptyList() // IDs
     private var recentCurrentIndex: Int = -1
-    private var recentLimit: Int = 30
+    private var recentLimit: Int = 50 // Default changed to 50
 
     // Global Played History (across scopes)
     private var playedSongIds: MutableSet<String> = mutableSetOf()
@@ -146,31 +146,63 @@ class PlaybackQueueManager(context: Context) {
             return getCurrentTrack() ?: findFirstUnplayed()
         }
 
-        // Smart Skip logic: Find the next track in queue that hasn't been played
+        val queue = getActiveQueue()
+        val index = getActiveIndex()
+
+        if (queue.isEmpty()) return null
+
+        // If we are at the end of the queue, try to reset or stop
+        if (index >= queue.size - 1) {
+            checkAndAutoResetHistory()
+            return findFirstUnplayed()
+        }
+
+        // --- NEW LOGIC FOR MANEUVERING AFTER "PREVIOUS" ---
+        val nextIndex = index + 1
+        val nextTrackId = queue[nextIndex]
+
+        return if (!playedSongIds.contains(nextTrackId)) {
+            // Option A: The very next song is UNPLAYED.
+            // This is the "Frontier". We play it and original jump logic resumes from here naturally.
+            setActiveIndex(nextIndex)
+            saveState()
+            allSongs.find { it.id == nextTrackId }
+        } else {
+            // Option B: The next song was ALREADY PLAYED.
+            // We only play it sequentially IF the user moved back manually.
+            // Otherwise (normal flow), we jump to the next unplayed song.
+            
+            // To satisfy: "If we went back, play sequentially until we hit an unplayed song"
+            // We check if there are ANY unplayed songs FURTHER ahead in the queue.
+            val hasUnplayedAhead = (nextIndex until queue.size).any { !playedSongIds.contains(queue[it]) }
+            
+            if (hasUnplayedAhead) {
+                // We are behind the frontier. Just go to the NEXT one (even if played).
+                setActiveIndex(nextIndex)
+                saveState()
+                allSongs.find { it.id == nextTrackId }
+            } else {
+                // No unplayed songs ahead! This means we finished the cycle.
+                checkAndAutoResetHistory()
+                findFirstUnplayed()
+            }
+        }
+    }
+
+    fun getPreviousTrack(): MusicFile? {
         val queue = getActiveQueue()
         var index = getActiveIndex()
 
         if (queue.isEmpty()) return null
 
-        // Try to find next unplayed
-        var foundIndex = -1
-        for (i in (index + 1) until queue.size) {
-            if (!playedSongIds.contains(queue[i])) {
-                foundIndex = i
-                break
-            }
+        index--
+        if (index < 0) {
+            index = 0 // Stay at beginning
         }
 
-        return if (foundIndex != -1) {
-            setActiveIndex(foundIndex)
-            saveState()
-            allSongs.find { it.id == queue[foundIndex] }
-        } else {
-            // End of unplayed songs in this queue
-            checkAndAutoResetHistory()
-            // After reset, try to find from the beginning
-            findFirstUnplayed()
-        }
+        setActiveIndex(index)
+        saveState()
+        return allSongs.find { it.id == queue[index] }
     }
 
     private fun findFirstUnplayed(): MusicFile? {
@@ -197,7 +229,6 @@ class PlaybackQueueManager(context: Context) {
     }
 
     fun skipToNext(): MusicFile? {
-        // Explicit skip button pressed
         return getNextTrack()
     }
 
@@ -206,7 +237,6 @@ class PlaybackQueueManager(context: Context) {
         val index = queue.indexOf(id)
         if (index != -1) {
             setActiveIndex(index)
-            // Note: History is added when song starts/completes in Service
             saveState()
             return allSongs.find { it.id == id }
         }
@@ -260,14 +290,20 @@ class PlaybackQueueManager(context: Context) {
         allCurrentIndex = prefs.getInt("all_index", -1)
         recentQueue = gson.fromJson(prefs.getString("recent_queue", "[]"), object : TypeToken<List<String>>() {}.type)
         recentCurrentIndex = prefs.getInt("recent_index", -1)
-        recentLimit = prefs.getInt("recent_limit", 30)
+        recentLimit = prefs.getInt("recent_limit", 50)
         currentScope = PlaybackScope.valueOf(prefs.getString("scope", PlaybackScope.ALL.name)!!)
         repeatMode = RepeatMode.valueOf(prefs.getString("repeat_mode", RepeatMode.SHUFFLE.name)!!)
         playedSongIds = prefs.getStringSet("played_history", emptySet())?.toMutableSet() ?: mutableSetOf()
     }
     
     fun getRecentSongs(): List<MusicFile> {
-        return allSongs.sortedByDescending { it.dateAdded }.take(recentLimit)
+        val recentIds = recentQueue
+        return recentIds.mapNotNull { id -> allSongs.find { it.id == id } }
+    }
+
+    fun getActiveQueueSongs(): List<MusicFile> {
+        val queue = getActiveQueue()
+        return queue.mapNotNull { id -> allSongs.find { it.id == id } }
     }
 
     fun getAllSongs(): List<MusicFile> = allSongs

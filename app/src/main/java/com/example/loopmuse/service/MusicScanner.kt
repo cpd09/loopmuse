@@ -70,6 +70,14 @@ class MusicScanner(private val context: Context) {
         return directories
     }
     
+    fun getRecommendedFolders(): List<File> {
+        return getAvailableFolders()
+    }
+
+    fun getRootDirectories(): List<File> {
+        return getDefaultMusicDirectories()
+    }
+
     fun getAvailableFolders(): List<File> {
         val folders = mutableListOf<File>()
         val rootDirs = getDefaultMusicDirectories()

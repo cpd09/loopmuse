@@ -148,6 +148,13 @@ class MusicServiceConnection(private val context: Context) {
         }
         context.startService(intent)
     }
+
+    fun playPrevious() {
+        val intent = Intent(context, MusicPlaybackService::class.java).apply {
+            action = MusicPlaybackService.ACTION_PREVIOUS
+        }
+        context.startService(intent)
+    }
     
     fun stopService() {
         val intent = Intent(context, MusicPlaybackService::class.java).apply {

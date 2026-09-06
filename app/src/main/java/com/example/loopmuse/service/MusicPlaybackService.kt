@@ -31,6 +31,7 @@ class MusicPlaybackService : Service() {
         const val NOTIFICATION_ID = 1001
         const val CHANNEL_ID = "music_playback_channel"
         const val ACTION_PLAY_PAUSE = "action_play_pause"
+        const val ACTION_PREVIOUS = "action_previous"
         const val ACTION_NEXT = "action_next"
         const val ACTION_STOP = "action_stop"
     }
@@ -114,6 +115,7 @@ class MusicPlaybackService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_PLAY_PAUSE -> togglePlayPause()
+            ACTION_PREVIOUS -> playPrevious()
             ACTION_NEXT -> playNext()
             ACTION_STOP -> stopService()
         }
@@ -246,6 +248,7 @@ class MusicPlaybackService : Service() {
     }
 
     fun setPlaybackScope(scope: PlaybackScope) {
+        stopCurrentSong()
         queueManager.currentScope = scope
         _playbackScope.value = scope
         serviceScope.launch {
@@ -254,6 +257,7 @@ class MusicPlaybackService : Service() {
     }
 
     fun setRecentLimit(limit: Int) {
+        stopCurrentSong()
         queueManager.setRecentLimit(limit)
         serviceScope.launch {
             updateSongCounts()
@@ -360,6 +364,18 @@ class MusicPlaybackService : Service() {
                 playSong(nextTrack)
             } else {
                 _queueEnded.emit(Unit)
+            }
+            launch {
+                updateSongCounts()
+            }
+        }
+    }
+
+    private fun playPrevious() {
+        serviceScope.launch {
+            val prevTrack = queueManager.getPreviousTrack()
+            if (prevTrack != null) {
+                playSong(prevTrack)
             }
             launch {
                 updateSongCounts()
@@ -529,10 +545,6 @@ class MusicPlaybackService : Service() {
     }
 
     fun getAllSongs(): List<MusicFile> {
-        return if (queueManager.currentScope == PlaybackScope.ALL) {
-            cachedAllSongs
-        } else {
-            queueManager.getRecentSongs()
-        }
+        return queueManager.getActiveQueueSongs()
     }
 }

@@ -1,18 +1,20 @@
 package com.example.loopmuse.ui
 
 import android.Manifest
+import android.app.Activity
 import android.os.Build
 import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.List
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.automirrored.filled.ExitToApp
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -21,6 +23,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -30,7 +33,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.loopmuse.data.MusicFile
 import com.example.loopmuse.data.PlaybackScope
 import com.example.loopmuse.data.RepeatMode
-import com.example.loopmuse.data.SelectionItem
+import com.example.loopmuse.service.MusicScanner
 import com.example.loopmuse.service.MusicServiceConnection
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
@@ -39,13 +42,14 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlin.time.Duration.Companion.milliseconds
 
-@OptIn(ExperimentalPermissionsApi::class)
+@OptIn(ExperimentalPermissionsApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreen() {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
     
+    val musicScanner = remember { MusicScanner(context) }
     val musicServiceConnection = remember { MusicServiceConnection(context) }
     
     val storagePermissionState = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -55,6 +59,7 @@ fun HomeScreen() {
     }
     
     var showSelectionScreen by remember { mutableStateOf(false) }
+    var showExitDialog by remember { mutableStateOf(false) }
     
     val isServiceConnected by musicServiceConnection.isConnected.collectAsStateWithLifecycle()
     val isPlaying by musicServiceConnection.isPlaying.collectAsStateWithLifecycle()
@@ -68,7 +73,7 @@ fun HomeScreen() {
     var showQueueEndedDialog by remember { mutableStateOf(false) }
     var showSearchDialog by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
-    var recentLimit by remember { mutableStateOf(30) }
+    var recentLimit by remember { mutableIntStateOf(50) }
 
     val filteredSongs by remember {
         derivedStateOf {
@@ -87,23 +92,6 @@ fun HomeScreen() {
     
     val hasPermissions by remember {
         derivedStateOf { storagePermissionState.status.isGranted }
-    }
-    
-    var lastKnownPlayingState by remember { mutableStateOf(false) }
-    
-    LaunchedEffect(isPlaying) {
-        if (isPlaying) {
-            lastKnownPlayingState = true
-        } else if (lastKnownPlayingState && currentTrack != null) {
-            kotlinx.coroutines.delay(500.milliseconds)
-            lastKnownPlayingState = false
-        } else {
-            lastKnownPlayingState = false
-        }
-    }
-    
-    val shouldShowNextButton by remember {
-        derivedStateOf { lastKnownPlayingState || currentTrack != null }
     }
     
     LaunchedEffect(Unit) {
@@ -131,6 +119,7 @@ fun HomeScreen() {
     
     if (showSelectionScreen) {
         MusicSelectionScreen(
+            musicScanner = musicScanner,
             initialSelectedItems = musicServiceConnection.getSelectedItems(),
             onSelectionApplied = { items ->
                 musicServiceConnection.setSelectedItems(items)
@@ -165,7 +154,7 @@ fun HomeScreen() {
             }
         ) { padding ->
             Column(
-                modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
+                modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 if (!isServiceConnected) {
@@ -179,29 +168,42 @@ fun HomeScreen() {
                         }
                     }
                 } else {
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
                     
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                        Box(modifier = Modifier.weight(1f)) {
+                    // Single Row Menu
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        IconButton(
+                            onClick = { musicServiceConnection.clearPlaybackHistory() },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = "새로고침", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                        }
+                        Box(modifier = Modifier.weight(1.2f)) {
                             PlaybackListCombo(playbackScope, recentLimit, musicServiceConnection) { recentLimit = it }
                         }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        IconButton(onClick = { musicServiceConnection.clearPlaybackHistory() }) {
-                            Icon(Icons.Default.Refresh, contentDescription = "재생곡 새로고침", tint = MaterialTheme.colorScheme.primary)
+                        Row(modifier = Modifier.weight(2f), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                            RepeatModeButtonSmall(RepeatMode.SHUFFLE, "랜덤", repeatMode, musicServiceConnection)
+                            RepeatModeButtonSmall(RepeatMode.SEQUENTIAL, "순차", repeatMode, musicServiceConnection)
+                            RepeatModeButtonSmall(RepeatMode.SINGLE_REPEAT, "1곡", repeatMode, musicServiceConnection)
                         }
                     }
                     
-                    Spacer(modifier = Modifier.height(8.dp))
-                    RepeatModeSelector(repeatMode, musicServiceConnection)
-                    
                     Spacer(modifier = Modifier.height(16.dp))
-                    NowPlayingCard(currentTrack, isPlaying, coroutineScope, musicServiceConnection, shouldShowNextButton)
                     
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(songCounts, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    // Now Playing Card with Marquee and Lyrics
+                    NowPlayingCardExpanded(currentTrack, isPlaying, coroutineScope, musicServiceConnection) {
+                        showExitDialog = true
+                    }
                     
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text("재생 목록", fontSize = 18.sp, fontWeight = FontWeight.Medium, modifier = Modifier.align(Alignment.Start))
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(songCounts, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("재생 목록", fontSize = 16.sp, fontWeight = FontWeight.Medium, modifier = Modifier.align(Alignment.Start))
                     
                     Box(modifier = Modifier.weight(1f)) {
                         PlaylistView(allSongs, currentTrack, playedSongIds) { song ->
@@ -211,6 +213,21 @@ fun HomeScreen() {
                 }
             }
         }
+    }
+
+    // Dialogs
+    if (showExitDialog) {
+        AlertDialog(
+            onDismissRequest = { showExitDialog = false },
+            title = { Text("종료") },
+            text = { Text("앱을 종료하시겠습니까?") },
+            confirmButton = {
+                TextButton(onClick = { (context as? Activity)?.finish() }) { Text("종료") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showExitDialog = false }) { Text("취소") }
+            }
+        )
     }
 
     if (showQueueEndedDialog) {
@@ -271,23 +288,26 @@ fun PlaybackListCombo(
     var expanded by remember { mutableStateOf(false) }
     val options = listOf(
         "전체곡" to (PlaybackScope.ALL to 0),
-        "최근 10곡" to (PlaybackScope.RECENT to 10),
-        "최근 30곡" to (PlaybackScope.RECENT to 30),
-        "최근 50곡" to (PlaybackScope.RECENT to 50)
+        "최근 15곡" to (PlaybackScope.RECENT to 15),
+        "최근 50곡" to (PlaybackScope.RECENT to 50),
+        "최근 100곡" to (PlaybackScope.RECENT to 100)
     )
     val currentLabel = when {
         scope == PlaybackScope.ALL -> "전체곡"
-        limit == 10 -> "최근 10곡"
-        limit == 30 -> "최근 30곡"
+        limit == 15 -> "최근 15곡"
         limit == 50 -> "최근 50곡"
+        limit == 100 -> "최근 100곡"
         else -> "전체곡"
     }
 
-    Box(modifier = Modifier.fillMaxWidth()) {
-        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
-            Text(currentLabel, fontSize = 16.sp)
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("▼", fontSize = 10.sp)
+    Box {
+        OutlinedButton(
+            onClick = { expanded = true },
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+        ) {
+            Text(currentLabel, fontSize = 13.sp, maxLines = 1)
+            Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(16.dp))
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             options.forEach { (label, config) ->
@@ -310,52 +330,81 @@ fun PlaybackListCombo(
 }
 
 @Composable
-fun RepeatModeSelector(mode: RepeatMode, connection: MusicServiceConnection) {
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-        RepeatModeButton(RepeatMode.SHUFFLE, "랜덤", mode, connection)
-        RepeatModeButton(RepeatMode.SEQUENTIAL, "순차", mode, connection)
-        RepeatModeButton(RepeatMode.SINGLE_REPEAT, "1곡", mode, connection)
-    }
-}
-
-@Composable
-fun RepeatModeButton(mode: RepeatMode, label: String, currentMode: RepeatMode, connection: MusicServiceConnection) {
+fun RepeatModeButtonSmall(mode: RepeatMode, label: String, currentMode: RepeatMode, connection: MusicServiceConnection) {
+    val isSelected = currentMode == mode
     FilterChip(
-        selected = currentMode == mode,
+        selected = isSelected,
         onClick = { connection.setRepeatMode(mode) },
-        label = { Text(label) }
+        label = { Text(label, fontSize = 12.sp) },
+        modifier = Modifier.height(32.dp)
     )
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun NowPlayingCard(
+fun NowPlayingCardExpanded(
     track: MusicFile?,
     isPlaying: Boolean,
     scope: kotlinx.coroutines.CoroutineScope,
     connection: MusicServiceConnection,
-    showNext: Boolean
+    onExit: () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f))
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f))
     ) {
         Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(track?.title ?: "재생 중인 곡 없음", fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(track?.artist ?: "Unknown Artist", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            // Marquee Text Row
+            val infoText = if (track != null) "${track.title} - ${track.artist} (${track.file.name})" else "재생 중인 곡 없음"
+            Text(
+                text = infoText,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                modifier = Modifier.basicMarquee()
+            )
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            // Lyrics Placeholder
+            Text(
+                text = "가사 작업예정",
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().height(40.dp)
+            )
+            
             Spacer(modifier = Modifier.height(16.dp))
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Button(onClick = {
-                    scope.launch {
-                        if (isPlaying) connection.togglePlayPause()
-                        else connection.playRandomUnplayedSong()
-                    }
-                }) {
-                    Text(if (isPlaying) "⏸ 일시정지" else "▶ 재생")
+            
+            // 4-Button Controller
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                IconButton(onClick = onExit) {
+                    Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "종료", tint = MaterialTheme.colorScheme.error)
                 }
-                if (showNext) {
-                    IconButton(onClick = { connection.playNext() }) {
-                        Text("⏭", fontSize = 24.sp)
-                    }
+                IconButton(onClick = { connection.playPrevious() }) {
+                    Icon(Icons.Default.SkipPrevious, contentDescription = "이전곡", modifier = Modifier.size(32.dp))
+                }
+                FilledTonalIconButton(
+                    onClick = {
+                        scope.launch {
+                            if (isPlaying) connection.togglePlayPause()
+                            else connection.playRandomUnplayedSong()
+                        }
+                    },
+                    modifier = Modifier.size(56.dp)
+                ) {
+                    Icon(
+                        if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = "재생/일시정지",
+                        modifier = Modifier.size(32.dp)
+                    )
+                }
+                IconButton(onClick = { connection.playNext() }) {
+                    Icon(Icons.Default.SkipNext, contentDescription = "다음곡", modifier = Modifier.size(32.dp))
                 }
             }
         }
@@ -382,7 +431,7 @@ fun PlaylistView(
             
             val contentColor = when {
                 isCurrent -> MaterialTheme.colorScheme.primary
-                isPlayed -> Color.Gray.copy(alpha = 0.6f)
+                isPlayed -> Color.Gray.copy(alpha = 0.5f)
                 else -> MaterialTheme.colorScheme.onSurface
             }
 
@@ -391,26 +440,27 @@ fun PlaylistView(
                 color = if (isCurrent) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
                 shape = MaterialTheme.shapes.medium
             ) {
-                Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(
-                        Icons.Default.List, 
+                        Icons.Default.MusicNote, 
                         contentDescription = null, 
                         tint = contentColor,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
                         Text(
                             text = song.title, 
                             color = contentColor,
+                            fontSize = 14.sp,
                             fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal, 
                             maxLines = 1, 
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
                             text = song.artist, 
-                            fontSize = 12.sp, 
-                            color = contentColor.copy(alpha = 0.8f)
+                            fontSize = 11.sp, 
+                            color = contentColor.copy(alpha = 0.7f)
                         )
                     }
                 }
