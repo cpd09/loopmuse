@@ -16,109 +16,101 @@ enum class SortOrder {
     ASCENDING, DESCENDING
 }
 
+data class EnvState(
+    val queue: List<String> = emptyList(),
+    val index: Int = -1
+)
+
 class PlaybackQueueManager(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("playback_queue", Context.MODE_PRIVATE)
     private val gson = Gson()
 
     private var allSongs: List<MusicFile> = emptyList()
     
-    // State for ALL scope
-    private var allQueue: List<String> = emptyList() // IDs
-    private var allCurrentIndex: Int = -1
-    
-    // State for RECENT scope
-    private var recentQueue: List<String> = emptySet<String>().toList() // Use set then list for recent IDs
-    private var recentCurrentIndex: Int = -1
-    private var recentLimit: Int = 100
+    // Multi-verse State: 4 scopes x 2 modes = 8 states
+    private var envStates: MutableMap<String, EnvState> = mutableMapOf()
 
-    // Global Played History (across scopes)
+    // Global Shared History & Positions
     private var playedSongIds: MutableSet<String> = mutableSetOf()
-    
-    // Per-track positions (Resume)
     private var trackPositions: MutableMap<String, Long> = mutableMapOf()
 
-    // Current State
+    // Current Active Environment
     var currentScope: PlaybackScope = PlaybackScope.ALL
     var repeatMode: RepeatMode = RepeatMode.SHUFFLE
+    
     var sortCriteria: SortCriteria = SortCriteria.DATE
     var sortOrder: SortOrder = SortOrder.DESCENDING
     var isSingleRepeat: Boolean = false
-
-    // Pending State (to be applied when current queue ends)
-    var pendingScope: PlaybackScope? = null
-    var pendingRepeatMode: RepeatMode? = null
+    var recentLimit: Int = 100
 
     init {
         loadState()
     }
 
-    fun setAllSongs(songs: List<MusicFile>) {
-        val oldSongsMap = allSongs.associateBy { it.id }
-        allSongs = songs
-        val newSongsMap = allSongs.associateBy { it.id }
+    private fun getEnvKey(scope: PlaybackScope, mode: RepeatMode): String {
+        return "${scope.name}_${mode.name}"
+    }
 
-        // Update ALL queue
-        updateQueue(PlaybackScope.ALL, newSongsMap, oldSongsMap)
-        
-        // Update RECENT queue
-        updateRecentQueue(newSongsMap, oldSongsMap)
-        
+    private fun getCurrentEnvKey() = getEnvKey(currentScope, repeatMode)
+
+    fun setAllSongs(songs: List<MusicFile>) {
+        allSongs = songs
+        // Re-generate all 8 queues to ensure they are up to date with the new library
+        refreshAllQueues()
         saveState()
     }
 
+    private fun refreshAllQueues() {
+        val scopes = listOf(PlaybackScope.ALL, PlaybackScope.RECENT)
+        val modes = listOf(RepeatMode.SHUFFLE, RepeatMode.SEQUENTIAL)
+        
+        scopes.forEach { s ->
+            modes.forEach { m ->
+                val key = getEnvKey(s, m)
+                val existing = envStates[key]
+                val songsForScope = getSongsForScope(s)
+                
+                val newQueue = if (m == RepeatMode.SHUFFLE) {
+                    // Try to maintain existing shuffle order if possible, or just shuffle
+                    songsForScope.map { it.id }.shuffled()
+                } else {
+                    songsForScope.sortedWith(getComparator()).map { it.id }
+                }
+                
+                val newIndex = if (existing != null && existing.index != -1) {
+                    val currentId = existing.queue.getOrNull(existing.index)
+                    newQueue.indexOf(currentId).coerceAtLeast(-1)
+                } else -1
+                
+                envStates[key] = EnvState(newQueue, newIndex)
+            }
+        }
+    }
+
     fun resetToDefault() {
-        // Hard reset after selection
         currentScope = PlaybackScope.ALL
         repeatMode = RepeatMode.SEQUENTIAL
         sortCriteria = SortCriteria.DATE
         sortOrder = SortOrder.DESCENDING
         isSingleRepeat = false
-        pendingScope = null
-        pendingRepeatMode = null
         
-        allQueue = allSongs
-            .asSequence()
-            .sortedByDescending { it.dateAdded }
-            .map { it.id }
-            .toList()
-        allCurrentIndex = if (allQueue.isNotEmpty()) 0 else -1
+        // Regenerate everything clean
+        envStates.clear()
+        refreshAllQueues()
+        
+        // Force first song selection
+        val key = getCurrentEnvKey()
+        val state = envStates[key]
+        if (state != null && state.queue.isNotEmpty()) {
+            envStates[key] = state.copy(index = 0)
+        }
         
         saveState()
     }
 
-    private fun updateQueue(scope: PlaybackScope, newSongsMap: Map<String, MusicFile>, oldSongsMap: Map<String, MusicFile>) {
-        val currentQueue = if (scope == PlaybackScope.ALL) allQueue else recentQueue
-        val currentIndex = if (scope == PlaybackScope.ALL) allCurrentIndex else recentCurrentIndex
-        
-        val newIds = newSongsMap.keys
-        val existingIdsInQueue = currentQueue.filter { newIds.contains(it) }
-        val addedIds = newIds.filter { !oldSongsMap.containsKey(it) }
-        
-        val updatedQueue = if (repeatMode == RepeatMode.SHUFFLE) {
-            val playedPart = if ((currentIndex >= 0) && (currentIndex < existingIdsInQueue.size)) {
-                existingIdsInQueue.subList(0, currentIndex + 1)
-            } else emptyList()
-            
-            val unplayedPart = if ((currentIndex + 1) < existingIdsInQueue.size) {
-                existingIdsInQueue.subList(currentIndex + 1, existingIdsInQueue.size)
-            } else emptyList()
-            
-            val newUnplayedPart = (unplayedPart + addedIds).shuffled()
-            playedPart + newUnplayedPart
-        } else {
-            newSongsMap.values
-                .asSequence()
-                .sortedWith(getComparator())
-                .map { it.id }
-                .toList()
-        }
-
-        if (scope == PlaybackScope.ALL) {
-            allQueue = updatedQueue
-            if (allCurrentIndex >= allQueue.size) allCurrentIndex = allQueue.size - 1
-        } else {
-            recentQueue = updatedQueue
-            if (recentCurrentIndex >= recentQueue.size) recentCurrentIndex = recentQueue.size - 1
+    private fun getSongsForScope(scope: PlaybackScope): List<MusicFile> {
+        return if (scope == PlaybackScope.ALL) allSongs else {
+            allSongs.asSequence().sortedByDescending { it.dateAdded }.take(recentLimit).toList()
         }
     }
 
@@ -130,32 +122,16 @@ class PlaybackQueueManager(context: Context) {
         return if (sortOrder == SortOrder.ASCENDING) baseComparator else baseComparator.reversed()
     }
 
-    private fun updateRecentQueue(newSongsMap: Map<String, MusicFile>, oldSongsMap: Map<String, MusicFile>) {
-        val recentSongs = newSongsMap.values
-            .asSequence()
-            .sortedByDescending { it.dateAdded }
-            .take(recentLimit)
-            .toList()
-            .associateBy { it.id }
-            
-        updateQueue(PlaybackScope.RECENT, recentSongs, oldSongsMap)
-    }
-
-    fun setRecentLimit(limit: Int) {
-        if (recentLimit != limit) {
-            recentLimit = limit
-            val recentSongs = allSongs
-                .sortedByDescending { it.dateAdded }
-                .take(recentLimit)
-            
-            recentQueue = if (repeatMode == RepeatMode.SHUFFLE) {
-                recentSongs.map { it.id }.shuffled()
-            } else {
-                recentSongs.sortedWith(getComparator()).map { it.id }
-            }
-            recentCurrentIndex = -1
-            saveState()
+    fun switchContext(scope: PlaybackScope, mode: RepeatMode) {
+        currentScope = scope
+        repeatMode = mode
+        isSingleRepeat = false // Clear on context switch
+        
+        val key = getCurrentEnvKey()
+        if (!envStates.containsKey(key)) {
+            refreshAllQueues() // Initialize if missing
         }
+        saveState()
     }
 
     fun toggleSort(criteria: SortCriteria) {
@@ -166,52 +142,22 @@ class PlaybackQueueManager(context: Context) {
             sortOrder = SortOrder.ASCENDING
         }
         
-        if (repeatMode == RepeatMode.SEQUENTIAL) {
-            val songsToQueue = getActiveSongs()
-            val newQueue = songsToQueue.sortedWith(getComparator()).map { it.id }
-            
-            val currentTrackId = getCurrentTrack()?.id
-            if (currentScope == PlaybackScope.ALL) {
-                allQueue = newQueue
-                allCurrentIndex = currentTrackId?.let { newQueue.indexOf(it) } ?: -1
-            } else {
-                recentQueue = newQueue
-                recentCurrentIndex = currentTrackId?.let { newQueue.indexOf(it) } ?: -1
-            }
+        // Refresh sequential queues with new sort
+        refreshAllQueues()
+        saveState()
+    }
+
+    fun updateRecentLimit(limit: Int) {
+        if (recentLimit != limit) {
+            recentLimit = limit
+            refreshAllQueues()
+            saveState()
         }
-        saveState()
-    }
-
-    private fun getActiveSongs(): List<MusicFile> {
-        return if (currentScope == PlaybackScope.ALL) allSongs else {
-            allSongs.sortedByDescending { it.dateAdded }.take(recentLimit)
-        }
-    }
-
-    fun requestPendingScope(scope: PlaybackScope) {
-        pendingScope = scope
-        isSingleRepeat = false // 1곡 재생 해제
-        saveState()
-    }
-
-    fun requestPendingRepeatMode(mode: RepeatMode) {
-        pendingRepeatMode = mode
-        isSingleRepeat = false // 1곡 재생 해제
-        saveState()
     }
 
     fun toggleSingleRepeat() {
         isSingleRepeat = !isSingleRepeat
         saveState()
-    }
-
-    fun saveTrackPosition(id: String, position: Long) {
-        trackPositions[id] = position
-        saveState()
-    }
-
-    fun getTrackPosition(id: String): Long {
-        return trackPositions[id] ?: 0L
     }
 
     fun addToHistory(id: String) {
@@ -223,104 +169,77 @@ class PlaybackQueueManager(context: Context) {
 
     fun clearAllHistory() {
         playedSongIds.clear()
-        allCurrentIndex = -1
-        recentCurrentIndex = -1
+        // Reset all indices in all environments to start fresh
+        envStates.keys.forEach { key ->
+            envStates[key] = envStates[key]?.copy(index = -1) ?: EnvState()
+        }
         saveState()
     }
 
-    private fun promotePendingState() {
-        var changed = false
-        pendingScope?.let {
-            currentScope = it
-            pendingScope = null
-            changed = true
-        }
-        pendingRepeatMode?.let {
-            repeatMode = it
-            pendingRepeatMode = null
-            changed = true
-        }
-        
-        if (changed) {
-            resetActiveQueue(repeatMode)
-        }
-    }
-
     private fun checkAndAutoResetHistory() {
-        val currentQueue = getActiveQueue()
-        if (currentQueue.isEmpty()) return
+        val state = envStates[getCurrentEnvKey()] ?: return
+        val unplayedInQueue = state.queue.filter { !playedSongIds.contains(it) }
         
-        val unplayedInQueue = currentQueue.filter { !playedSongIds.contains(it) }
-        if (unplayedInQueue.isEmpty()) {
+        if (unplayedInQueue.isEmpty() && state.queue.isNotEmpty()) {
             playedSongIds.clear()
-            allCurrentIndex = -1
-            recentCurrentIndex = -1
-            
-            // Apply pending updates when cycle ends
-            promotePendingState()
+            envStates.keys.forEach { key ->
+                envStates[key] = envStates[key]?.copy(index = -1) ?: EnvState()
+            }
             saveState()
         }
     }
 
     fun getNextTrack(): MusicFile? {
-        if (isSingleRepeat) {
-            return getCurrentTrack() ?: findFirstUnplayed()
-        }
+        if (isSingleRepeat) return getCurrentTrack() ?: findFirstUnplayed()
 
-        val queue = getActiveQueue()
-        val index = getActiveIndex()
+        val key = getCurrentEnvKey()
+        val state = envStates[key] ?: return null
+        val queue = state.queue
+        val index = state.index
 
         if (queue.isEmpty()) return null
 
-        if (index >= (queue.size - 1)) {
-            checkAndAutoResetHistory()
-            return findFirstUnplayed()
+        // Try to find next unplayed in the CURRENT queue
+        var foundIndex = -1
+        for (i in (index + 1) until queue.size) {
+            if (!playedSongIds.contains(queue[i])) {
+                foundIndex = i
+                break
+            }
         }
 
-        val nextIndex = index + 1
-        val nextTrackId = queue[nextIndex]
-
-        return if (!playedSongIds.contains(nextTrackId)) {
-            setActiveIndex(nextIndex)
+        return if (foundIndex != -1) {
+            envStates[key] = state.copy(index = foundIndex)
             saveState()
-            allSongs.find { it.id == nextTrackId }
+            allSongs.find { it.id == queue[foundIndex] }
         } else {
-            val hasUnplayedAhead = (nextIndex until queue.size).any { !playedSongIds.contains(queue[it]) }
-            
-            if (hasUnplayedAhead) {
-                setActiveIndex(nextIndex)
-                saveState()
-                allSongs.find { it.id == nextTrackId }
-            } else {
-                checkAndAutoResetHistory()
-                findFirstUnplayed()
-            }
+            checkAndAutoResetHistory()
+            findFirstUnplayed()
         }
     }
 
     fun getPreviousTrack(): MusicFile? {
-        val queue = getActiveQueue()
-        var index = getActiveIndex()
+        val key = getCurrentEnvKey()
+        val state = envStates[key] ?: return null
+        val queue = state.queue
+        var index = state.index
 
         if (queue.isEmpty()) return null
 
-        index--
-        if (index < 0) {
-            index = 0
-        }
-
-        setActiveIndex(index)
+        index = (index - 1).coerceAtLeast(0)
+        envStates[key] = state.copy(index = index)
         saveState()
         return allSongs.find { it.id == queue[index] }
     }
 
     private fun findFirstUnplayed(): MusicFile? {
-        val queue = getActiveQueue()
-        if (queue.isEmpty()) return null
+        val key = getCurrentEnvKey()
+        val state = envStates[key] ?: return null
+        val queue = state.queue
         
         for (i in queue.indices) {
             if (!playedSongIds.contains(queue[i])) {
-                setActiveIndex(i)
+                envStates[key] = state.copy(index = i)
                 saveState()
                 return allSongs.find { it.id == queue[i] }
             }
@@ -329,105 +248,68 @@ class PlaybackQueueManager(context: Context) {
     }
 
     fun getCurrentTrack(): MusicFile? {
-        val queue = getActiveQueue()
-        val index = getActiveIndex()
-        if (index in queue.indices) {
-            return allSongs.find { it.id == queue[index] }
-        }
-        return null
+        val state = envStates[getCurrentEnvKey()] ?: return null
+        return if (state.index in state.queue.indices) {
+            allSongs.find { it.id == state.queue[state.index] }
+        } else null
     }
 
-    fun skipToNext(): MusicFile? {
-        return getNextTrack()
-    }
+    fun skipToNext(): MusicFile? = getNextTrack()
 
     fun playTrackById(id: String): MusicFile? {
-        val queue = getActiveQueue()
-        val index = queue.indexOf(id)
-        if (index != -1) {
-            setActiveIndex(index)
+        val key = getCurrentEnvKey()
+        val state = envStates[key] ?: return null
+        val idx = state.queue.indexOf(id)
+        if (idx != -1) {
+            envStates[key] = state.copy(index = idx)
             saveState()
             return allSongs.find { it.id == id }
         }
         return null
     }
 
-    fun resetActiveQueue(mode: RepeatMode) {
-        repeatMode = mode
-        val songsToQueue = getActiveSongs()
-
-        val newQueue = if (mode == RepeatMode.SHUFFLE) {
-            songsToQueue.map { it.id }.shuffled()
-        } else {
-            songsToQueue.sortedWith(getComparator()).map { it.id }
-        }
-
-        if (currentScope == PlaybackScope.ALL) {
-            allQueue = newQueue
-            allCurrentIndex = -1
-        } else {
-            recentQueue = newQueue
-            recentCurrentIndex = -1
-        }
+    fun saveTrackPosition(id: String, position: Long) {
+        trackPositions[id] = position
         saveState()
     }
 
-    private fun getActiveQueue() = if (currentScope == PlaybackScope.ALL) allQueue else recentQueue
-    private fun getActiveIndex() = if (currentScope == PlaybackScope.ALL) allCurrentIndex else recentCurrentIndex
-    private fun setActiveIndex(index: Int) {
-        if (currentScope == PlaybackScope.ALL) allCurrentIndex = index else recentCurrentIndex = index
-    }
+    fun getTrackPosition(id: String): Long = trackPositions[id] ?: 0L
 
     private fun saveState() {
         prefs.edit().apply {
-            putString("all_queue", gson.toJson(allQueue))
-            putInt("all_index", allCurrentIndex)
-            putString("recent_queue", gson.toJson(recentQueue))
-            putInt("recent_index", recentCurrentIndex)
-            putInt("recent_limit", recentLimit)
+            putString("env_states", gson.toJson(envStates))
             putString("scope", currentScope.name)
             putString("repeat_mode", repeatMode.name)
             putStringSet("played_history", playedSongIds)
             putString("sort_criteria", sortCriteria.name)
             putString("sort_order", sortOrder.name)
             putBoolean("is_single_repeat", isSingleRepeat)
-            putString("pending_scope", pendingScope?.name)
-            putString("pending_repeat_mode", pendingRepeatMode?.name)
+            putInt("recent_limit", recentLimit)
             putString("track_positions", gson.toJson(trackPositions))
             apply()
         }
     }
 
     private fun loadState() {
-        allQueue = gson.fromJson(prefs.getString("all_queue", "[]"), object : TypeToken<List<String>>() {}.type)
-        allCurrentIndex = prefs.getInt("all_index", -1)
-        recentQueue = gson.fromJson(prefs.getString("recent_queue", "[]"), object : TypeToken<List<String>>() {}.type)
-        recentCurrentIndex = prefs.getInt("recent_index", -1)
-        recentLimit = prefs.getInt("recent_limit", 100)
+        val statesJson = prefs.getString("env_states", "{}")
+        envStates = gson.fromJson(statesJson, object : TypeToken<MutableMap<String, EnvState>>() {}.type) ?: mutableMapOf()
+        
         currentScope = PlaybackScope.valueOf(prefs.getString("scope", PlaybackScope.ALL.name)!!)
         repeatMode = RepeatMode.valueOf(prefs.getString("repeat_mode", RepeatMode.SHUFFLE.name)!!)
         playedSongIds = prefs.getStringSet("played_history", emptySet())?.toMutableSet() ?: mutableSetOf()
         sortCriteria = SortCriteria.valueOf(prefs.getString("sort_criteria", SortCriteria.DATE.name)!!)
         sortOrder = SortOrder.valueOf(prefs.getString("sort_order", SortOrder.DESCENDING.name)!!)
         isSingleRepeat = prefs.getBoolean("is_single_repeat", false)
-        
-        val pScope = prefs.getString("pending_scope", null)
-        pendingScope = pScope?.let { PlaybackScope.valueOf(it) }
-        
-        val pMode = prefs.getString("pending_repeat_mode", null)
-        pendingRepeatMode = pMode?.let { RepeatMode.valueOf(it) }
+        recentLimit = prefs.getInt("recent_limit", 100)
         
         val positionsJson = prefs.getString("track_positions", "{}")
         trackPositions = gson.fromJson(positionsJson, object : TypeToken<MutableMap<String, Long>>() {}.type) ?: mutableMapOf()
     }
     
-    fun getRecentSongs(): List<MusicFile> {
-        val recentIds = recentQueue
-        return recentIds.mapNotNull { id -> allSongs.find { it.id == id } }
+    fun getActiveQueueSongs(): List<MusicFile> {
+        val state = envStates[getCurrentEnvKey()] ?: return emptyList()
+        return state.queue.mapNotNull { id -> allSongs.find { it.id == id } }
     }
 
-    fun getActiveQueueSongs(): List<MusicFile> {
-        val queue = getActiveQueue()
-        return queue.mapNotNull { id -> allSongs.find { it.id == id } }
-    }
+    fun getAllSongs(): List<MusicFile> = allSongs
 }

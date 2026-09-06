@@ -50,12 +50,6 @@ class MusicServiceConnection(private val context: Context) {
     private val _isSingleRepeat = MutableStateFlow(value = false)
     val isSingleRepeat: StateFlow<Boolean> = _isSingleRepeat
 
-    private val _pendingScope = MutableStateFlow<PlaybackScope?>(null)
-    val pendingScope: StateFlow<PlaybackScope?> = _pendingScope
-
-    private val _pendingRepeatMode = MutableStateFlow<RepeatMode?>(null)
-    val pendingRepeatMode: StateFlow<RepeatMode?> = _pendingRepeatMode
-
     private val _queueEnded = MutableSharedFlow<Unit>()
     val queueEnded: SharedFlow<Unit> = _queueEnded
     
@@ -115,16 +109,6 @@ class MusicServiceConnection(private val context: Context) {
                     launch {
                         service.isSingleRepeat.collect { value ->
                             _isSingleRepeat.value = value
-                        }
-                    }
-                    launch {
-                        service.pendingScope.collect { scope ->
-                            _pendingScope.value = scope
-                        }
-                    }
-                    launch {
-                        service.pendingRepeatMode.collect { mode ->
-                            _pendingRepeatMode.value = mode
                         }
                     }
                     launch {

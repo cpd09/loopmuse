@@ -36,6 +36,7 @@ import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.milliseconds
 
 @OptIn(ExperimentalPermissionsApi::class, ExperimentalFoundationApi::class)
 @Composable
@@ -55,6 +56,7 @@ fun HomeScreen() {
     
     var showSelectionScreen by remember { mutableStateOf(value = false) }
     var showExitDialog by remember { mutableStateOf(value = false) }
+    var showRefreshDialog by remember { mutableStateOf(value = false) }
     
     val isServiceConnected by musicServiceConnection.isConnected.collectAsStateWithLifecycle()
     val isPlaying by musicServiceConnection.isPlaying.collectAsStateWithLifecycle()
@@ -65,8 +67,6 @@ fun HomeScreen() {
     val repeatMode by musicServiceConnection.repeatMode.collectAsStateWithLifecycle()
     val playbackScope by musicServiceConnection.playbackScope.collectAsStateWithLifecycle()
     val isSingleRepeat by musicServiceConnection.isSingleRepeat.collectAsStateWithLifecycle()
-    val pendingScope by musicServiceConnection.pendingScope.collectAsStateWithLifecycle()
-    val pendingRepeatMode by musicServiceConnection.pendingRepeatMode.collectAsStateWithLifecycle()
     
     val currentPosition by musicServiceConnection.currentPosition.collectAsStateWithLifecycle()
     val duration by musicServiceConnection.duration.collectAsStateWithLifecycle()
@@ -128,9 +128,10 @@ fun HomeScreen() {
                 musicServiceConnection.setSelectedItems(items)
                 showSelectionScreen = false
             },
-        ) {
-            showSelectionScreen = false
-        }
+            onBackPressed = {
+                showSelectionScreen = false
+            },
+        )
     } else {
         Scaffold(
             modifier = Modifier.fillMaxSize().safeDrawingPadding(),
@@ -138,17 +139,9 @@ fun HomeScreen() {
                 Surface(tonalElevation = 4.dp) {
                     Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                "🎵 LoopMuse", 
-                                fontSize = 24.sp, 
-                                fontWeight = FontWeight.Bold, 
-                                modifier = Modifier.weight(1f),
-                            )
+                            Text("🎵 LoopMuse", fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                             IconButton(onClick = { showSearchDialog = true }) {
-                                Icon(
-                                    Icons.Default.Search, 
-                                    contentDescription = "검색",
-                                )
+                                Icon(Icons.Default.Search, contentDescription = "검색")
                             }
                         }
                         Spacer(modifier = Modifier.height(8.dp))
@@ -175,40 +168,36 @@ fun HomeScreen() {
                     }
                 } else if (!hasPermissions) {
                     Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                        Button(
-                            onClick = { 
-                                storagePermissionState.launchPermissionRequest() 
-                            },
-                        ) {
+                        Button(onClick = { storagePermissionState.launchPermissionRequest() }) {
                             Text("저장소 권한 허용")
                         }
                     }
                 } else {
                     Spacer(modifier = Modifier.height(12.dp))
                     
-                    // Single Row Menu with Pending visualization
+                    // Single Row Menu
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         IconButton(
-                            onClick = { musicServiceConnection.clearPlaybackHistory() },
+                            onClick = { showRefreshDialog = true },
                             modifier = Modifier.size(36.dp),
                         ) {
                             Icon(
                                 Icons.Default.Refresh, 
                                 contentDescription = "새로고침", 
-                                tint = MaterialTheme.colorScheme.primary, 
-                                modifier = Modifier.size(20.dp),
+                                tint = Color.Red, 
+                                modifier = Modifier.size(24.dp),
                             )
                         }
                         Box(modifier = Modifier.weight(1.3f)) {
-                            PlaybackListCombo(playbackScope, pendingScope, recentLimit, musicServiceConnection) { recentLimit = it }
+                            PlaybackListCombo(playbackScope, recentLimit, musicServiceConnection) { recentLimit = it }
                         }
                         Row(modifier = Modifier.weight(2f), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                            RepeatModeButtonSmall(RepeatMode.SHUFFLE, "랜덤", repeatMode, pendingRepeatMode, isSingleRepeat, musicServiceConnection)
-                            RepeatModeButtonSmall(RepeatMode.SEQUENTIAL, "순차", repeatMode, pendingRepeatMode, isSingleRepeat, musicServiceConnection)
+                            RepeatModeButtonSmall(RepeatMode.SHUFFLE, "랜덤", repeatMode, isSingleRepeat, musicServiceConnection)
+                            RepeatModeButtonSmall(RepeatMode.SEQUENTIAL, "순차", repeatMode, isSingleRepeat, musicServiceConnection)
                             SingleRepeatButtonSmall(isSingleRepeat, musicServiceConnection)
                         }
                     }
@@ -262,6 +251,29 @@ fun HomeScreen() {
     }
 
     // Dialogs ...
+    if (showRefreshDialog) {
+        AlertDialog(
+            onDismissRequest = { showRefreshDialog = false },
+            title = { Text("재생 기록 초기화") },
+            text = { Text("모든 재생한 곡 정보를 지우고 처음부터 다시 시작하시겠습니까?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        musicServiceConnection.clearPlaybackHistory()
+                        showRefreshDialog = false
+                    }
+                ) { 
+                    Text("새로고침", color = Color.Red, fontWeight = FontWeight.Bold) 
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRefreshDialog = false }) { 
+                    Text("취소") 
+                }
+            }
+        )
+    }
+
     if (showExitDialog) {
         AlertDialog(
             onDismissRequest = { showExitDialog = false },
@@ -290,20 +302,16 @@ fun HomeScreen() {
                             coroutineScope.launch { musicServiceConnection.playRandomUnplayedSong() }
                             showQueueEndedDialog = false
                         }, 
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { 
-                        Text("새로운 랜덤 재생") 
-                    }
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("새로운 랜덤 재생") }
                     Button(
                         onClick = {
                             musicServiceConnection.setRepeatMode(RepeatMode.SEQUENTIAL)
                             coroutineScope.launch { musicServiceConnection.playRandomUnplayedSong() }
                             showQueueEndedDialog = false
                         }, 
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { 
-                        Text("전체 순차 재생") 
-                    }
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("전체 순차 재생") }
                 }
             }
         )
@@ -315,27 +323,15 @@ fun HomeScreen() {
             title = { Text("곡 검색") },
             text = {
                 Column {
-                    TextField(
-                        value = searchQuery,
-                        onValueChange = { searchQuery = it },
-                        placeholder = { Text("제목 또는 아티스트 검색") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                    TextField(value = searchQuery, onValueChange = { searchQuery = it }, placeholder = { Text("제목 또는 아티스트 검색") }, modifier = Modifier.fillMaxWidth())
                     Spacer(modifier = Modifier.height(8.dp))
                     LazyColumn(modifier = Modifier.height(300.dp)) {
                         items(filteredSongs) { song ->
-                            TextButton(
-                                onClick = {
-                                    musicServiceConnection.playTrackById(song.id)
-                                    showSearchDialog = false
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Text(
-                                    "${song.title} - ${song.artist}",
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
+                            TextButton(onClick = {
+                                musicServiceConnection.playTrackById(song.id)
+                                showSearchDialog = false
+                            }, modifier = Modifier.fillMaxWidth()) {
+                                Text("${song.title} - ${song.artist}", maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
                     }
@@ -376,7 +372,6 @@ fun SortToggleButton(label: String, isSelected: Boolean, order: SortOrder, onCli
 @Composable
 fun PlaybackListCombo(
     scope: PlaybackScope,
-    pendingScope: PlaybackScope?,
     limit: Int,
     connection: MusicServiceConnection,
     onLimitChange: (Int) -> Unit
@@ -389,9 +384,8 @@ fun PlaybackListCombo(
         "최근 100곡" to (PlaybackScope.RECENT to 100)
     )
     
-    val effectiveScope = pendingScope ?: scope
     val currentLabel = when {
-        effectiveScope == PlaybackScope.ALL -> "전체곡"
+        scope == PlaybackScope.ALL -> "전체곡"
         limit == 15 -> "최근 15곡"
         limit == 50 -> "최근 50곡"
         limit == 100 -> "최근 100곡"
@@ -403,15 +397,11 @@ fun PlaybackListCombo(
             onClick = { expanded = true },
             modifier = Modifier.fillMaxWidth(),
             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-            colors = if (pendingScope != null) ButtonDefaults.outlinedButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)) else ButtonDefaults.outlinedButtonColors()
         ) {
             Text(currentLabel, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(16.dp))
         }
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-        ) {
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             options.forEach { (label, config) ->
                 DropdownMenuItem(
                     text = { Text(label) },
@@ -424,7 +414,7 @@ fun PlaybackListCombo(
                             onLimitChange(newLimit)
                         }
                         expanded = false
-                    },
+                    }
                 )
             }
         }
@@ -436,23 +426,16 @@ fun RepeatModeButtonSmall(
     mode: RepeatMode, 
     label: String, 
     currentMode: RepeatMode, 
-    pendingMode: RepeatMode?,
     isSingleRepeat: Boolean,
     connection: MusicServiceConnection
 ) {
-    val effectiveMode = pendingMode ?: currentMode
-    val isSelected = !isSingleRepeat && (effectiveMode == mode)
+    val isSelected = !isSingleRepeat && (currentMode == mode)
     
     FilterChip(
         selected = isSelected,
         onClick = { connection.setRepeatMode(mode) },
         label = { Text(label, fontSize = 11.sp) },
         modifier = Modifier.height(32.dp),
-        colors = if (pendingMode == mode) {
-            FilterChipDefaults.filterChipColors(selectedContainerColor = MaterialTheme.colorScheme.primaryContainer)
-        } else {
-            FilterChipDefaults.filterChipColors()
-        },
     )
 }
 
@@ -462,7 +445,7 @@ fun SingleRepeatButtonSmall(isSingleRepeat: Boolean, connection: MusicServiceCon
         selected = isSingleRepeat,
         onClick = { connection.toggleSingleRepeat() },
         label = { Text("1곡", fontSize = 11.sp) },
-        modifier = Modifier.height(32.dp),
+        modifier = Modifier.height(32.dp)
     )
 }
 
@@ -602,12 +585,12 @@ fun PlaylistView(
                             fontSize = 14.sp,
                             fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal, 
                             maxLines = 1, 
-                            overflow = TextOverflow.Ellipsis,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Text(
                             text = song.artist, 
                             fontSize = 11.sp, 
-                            color = contentColor.copy(alpha = 0.7f),
+                            color = contentColor.copy(alpha = 0.7f)
                         )
                     }
                 }
@@ -622,4 +605,3 @@ private fun formatTime(millis: Long): String {
     val seconds = totalSeconds % 60
     return "%02d:%02d".format(minutes, seconds)
 }
-

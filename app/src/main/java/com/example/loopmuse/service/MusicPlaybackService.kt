@@ -68,12 +68,6 @@ class MusicPlaybackService : Service() {
     private val _isSingleRepeat = MutableStateFlow(value = false)
     val isSingleRepeat: StateFlow<Boolean> = _isSingleRepeat
 
-    private val _pendingScope = MutableStateFlow<PlaybackScope?>(null)
-    val pendingScope: StateFlow<PlaybackScope?> = _pendingScope
-
-    private val _pendingRepeatMode = MutableStateFlow<RepeatMode?>(null)
-    val pendingRepeatMode: StateFlow<RepeatMode?> = _pendingRepeatMode
-
     private val _queueEnded = MutableSharedFlow<Unit>()
     val queueEnded: SharedFlow<Unit> = _queueEnded
 
@@ -106,8 +100,6 @@ class MusicPlaybackService : Service() {
         _repeatMode.value = queueManager.repeatMode
         _playbackScope.value = queueManager.currentScope
         _isSingleRepeat.value = queueManager.isSingleRepeat
-        _pendingScope.value = queueManager.pendingScope
-        _pendingRepeatMode.value = queueManager.pendingRepeatMode
         _playedSongIds.value = queueManager.getPlayedSongIds()
         _allSongs.value = queueManager.getActiveQueueSongs()
         
@@ -227,8 +219,6 @@ class MusicPlaybackService : Service() {
             _repeatMode.value = queueManager.repeatMode
             _playbackScope.value = queueManager.currentScope
             _isSingleRepeat.value = queueManager.isSingleRepeat
-            _pendingScope.value = queueManager.pendingScope
-            _pendingRepeatMode.value = queueManager.pendingRepeatMode
             _allSongs.value = queueManager.getActiveQueueSongs()
             
             // Set initial track for UI display
@@ -275,7 +265,7 @@ class MusicPlaybackService : Service() {
                 _songCounts.value = if (queueManager.currentScope == PlaybackScope.ALL) {
                     "$total total songs"
                 } else {
-                    "Recent ${queueManager.getRecentSongs().size} songs"
+                    "Recent ${queueManager.getActiveQueueSongs().size} songs"
                 }
             } catch (_: Exception) {
                 _songCounts.value = "Error loading song counts"
@@ -292,15 +282,32 @@ class MusicPlaybackService : Service() {
     }
     
     fun setRepeatMode(mode: RepeatMode) {
-        queueManager.requestPendingRepeatMode(mode)
-        _pendingRepeatMode.value = mode
+        queueManager.switchContext(queueManager.currentScope, mode)
+        _repeatMode.value = queueManager.repeatMode
+        _playbackScope.value = queueManager.currentScope
         _isSingleRepeat.value = false
+        _allSongs.value = queueManager.getActiveQueueSongs()
+        
+        // Update current track from the restored state of the new context
+        queueManager.getCurrentTrack()?.let { _currentTrack.value = it }
+        
+        serviceScope.launch {
+            updateSongCounts()
+        }
     }
 
     fun setPlaybackScope(scope: PlaybackScope) {
-        queueManager.requestPendingScope(scope)
-        _pendingScope.value = scope
+        queueManager.switchContext(scope, queueManager.repeatMode)
+        _repeatMode.value = queueManager.repeatMode
+        _playbackScope.value = queueManager.currentScope
         _isSingleRepeat.value = false
+        _allSongs.value = queueManager.getActiveQueueSongs()
+        
+        queueManager.getCurrentTrack()?.let { _currentTrack.value = it }
+
+        serviceScope.launch {
+            updateSongCounts()
+        }
     }
 
     fun toggleSingleRepeat() {
@@ -310,7 +317,8 @@ class MusicPlaybackService : Service() {
 
     fun setRecentLimit(limit: Int) {
         stopCurrentSong()
-        queueManager.setRecentLimit(limit)
+        queueManager.updateRecentLimit(limit)
+        _allSongs.value = queueManager.getActiveQueueSongs()
         serviceScope.launch {
             updateSongCounts()
         }
@@ -397,11 +405,10 @@ class MusicPlaybackService : Service() {
                     serviceScope.launch {
                         val nextTrack = queueManager.getNextTrack()
                         
-                        // Update states in case promotion happened
+                        // Update states in case context or isSingleRepeat changed (though here it's mostly completion)
                         _repeatMode.value = queueManager.repeatMode
                         _playbackScope.value = queueManager.currentScope
-                        _pendingScope.value = queueManager.pendingScope
-                        _pendingRepeatMode.value = queueManager.pendingRepeatMode
+                        _allSongs.value = queueManager.getActiveQueueSongs()
 
                         nextTrack?.let {
                             playSong(it)
@@ -456,11 +463,10 @@ class MusicPlaybackService : Service() {
         serviceScope.launch {
             val nextTrack = queueManager.skipToNext()
             
-            // Update states in case promotion happened
+            // Update states
             _repeatMode.value = queueManager.repeatMode
             _playbackScope.value = queueManager.currentScope
-            _pendingScope.value = queueManager.pendingScope
-            _pendingRepeatMode.value = queueManager.pendingRepeatMode
+            _allSongs.value = queueManager.getActiveQueueSongs()
 
             if (nextTrack != null) {
                 playSong(nextTrack)
