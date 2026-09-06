@@ -36,7 +36,6 @@ import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
-import kotlin.time.Duration.Companion.milliseconds
 
 @OptIn(ExperimentalPermissionsApi::class, ExperimentalFoundationApi::class)
 @Composable
@@ -128,10 +127,9 @@ fun HomeScreen() {
                 musicServiceConnection.setSelectedItems(items)
                 showSelectionScreen = false
             },
-            onBackPressed = {
-                showSelectionScreen = false
-            },
-        )
+        ) {
+            showSelectionScreen = false
+        }
     } else {
         Scaffold(
             modifier = Modifier.fillMaxSize().safeDrawingPadding(),
@@ -263,7 +261,11 @@ fun HomeScreen() {
                         showRefreshDialog = false
                     }
                 ) { 
-                    Text("새로고침", color = Color.Red, fontWeight = FontWeight.Bold) 
+                    Text(
+                        text = "새로고침", 
+                        color = Color.Red, 
+                        fontWeight = FontWeight.Bold
+                    ) 
                 }
             },
             dismissButton = {
@@ -303,7 +305,9 @@ fun HomeScreen() {
                             showQueueEndedDialog = false
                         }, 
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text("새로운 랜덤 재생") }
+                    ) { 
+                        Text("새로운 랜덤 재생") 
+                    }
                     Button(
                         onClick = {
                             musicServiceConnection.setRepeatMode(RepeatMode.SEQUENTIAL)
@@ -311,7 +315,9 @@ fun HomeScreen() {
                             showQueueEndedDialog = false
                         }, 
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text("전체 순차 재생") }
+                    ) { 
+                        Text("전체 순차 재생") 
+                    }
                 }
             }
         )
@@ -549,9 +555,12 @@ fun PlaylistView(
     onSongClick: (MusicFile) -> Unit
 ) {
     val listState = rememberLazyListState()
-    LaunchedEffect(currentTrack) {
+    LaunchedEffect(currentTrack, songs) {
         val index = songs.indexOfFirst { it.id == currentTrack?.id }
-        if (index != -1) listState.animateScrollToItem(index)
+        if (index != -1) {
+            // Use scrollToItem first to jump, or just animate
+            listState.animateScrollToItem(index)
+        }
     }
 
     LazyColumn(state = listState, modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(vertical = 8.dp)) {

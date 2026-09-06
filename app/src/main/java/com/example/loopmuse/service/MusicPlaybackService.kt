@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlin.time.Duration.Companion.seconds
 
 class MusicPlaybackService : Service() {
     
@@ -124,7 +125,7 @@ class MusicPlaybackService : Service() {
                         _duration.value = it.duration.toLong()
                     }
                 }
-                delay(1000)
+                delay(1.seconds)
             }
         }
     }
@@ -241,7 +242,7 @@ class MusicPlaybackService : Service() {
     private suspend fun getCachedOrScanSongs(): List<MusicFile> {
         val currentTime = System.currentTimeMillis()
         
-        return if (cachedAllSongs.isNotEmpty() && ((currentTime - lastScanTime) < scanCacheTimeout)) {
+        return if ((cachedAllSongs.isNotEmpty()) && ((currentTime - lastScanTime) < scanCacheTimeout)) {
             // Use cached results if available and not expired
             cachedAllSongs
         } else {
@@ -282,6 +283,7 @@ class MusicPlaybackService : Service() {
     }
     
     fun setRepeatMode(mode: RepeatMode) {
+        stopCurrentSong()
         queueManager.switchContext(queueManager.currentScope, mode)
         _repeatMode.value = queueManager.repeatMode
         _playbackScope.value = queueManager.currentScope
@@ -297,6 +299,7 @@ class MusicPlaybackService : Service() {
     }
 
     fun setPlaybackScope(scope: PlaybackScope) {
+        stopCurrentSong()
         queueManager.switchContext(scope, queueManager.repeatMode)
         _repeatMode.value = queueManager.repeatMode
         _playbackScope.value = queueManager.currentScope
@@ -379,7 +382,7 @@ class MusicPlaybackService : Service() {
                 setOnPreparedListener { player ->
                     // Restore position
                     val savedPos = queueManager.getTrackPosition(musicFile.id)
-                    if (savedPos > 0 && savedPos < player.duration) {
+                    if ((savedPos > 0) && (savedPos < player.duration)) {
                         player.seekTo(savedPos.toInt())
                     }
                     
@@ -468,11 +471,10 @@ class MusicPlaybackService : Service() {
             _playbackScope.value = queueManager.currentScope
             _allSongs.value = queueManager.getActiveQueueSongs()
 
-            if (nextTrack != null) {
-                playSong(nextTrack)
-            } else {
-                _queueEnded.emit(Unit)
-            }
+            nextTrack?.let {
+                playSong(it)
+            } ?: _queueEnded.emit(Unit)
+            
             launch {
                 updateSongCounts()
             }
@@ -556,7 +558,7 @@ class MusicPlaybackService : Service() {
         }
         val playPausePendingIntent = PendingIntent.getService(
             this, 1, playPauseIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         
         val nextIntent = Intent(this, MusicPlaybackService::class.java).apply {
@@ -564,7 +566,7 @@ class MusicPlaybackService : Service() {
         }
         val nextPendingIntent = PendingIntent.getService(
             this, 2, nextIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         
         val stopIntent = Intent(this, MusicPlaybackService::class.java).apply {
@@ -572,7 +574,7 @@ class MusicPlaybackService : Service() {
         }
         val stopPendingIntent = PendingIntent.getService(
             this, 3, stopIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         
         val currentTrack = currentSong ?: return createEmptyNotification()
@@ -589,7 +591,7 @@ class MusicPlaybackService : Service() {
             .addAction(
                 android.R.drawable.ic_media_previous,
                 "Previous",
-                null // Previous functionality can be added later
+                null, // Previous functionality can be added later
             )
             .addAction(
                 if (_isPlaying.value) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,

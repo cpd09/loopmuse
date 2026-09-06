@@ -18,7 +18,7 @@ enum class SortOrder {
 
 data class EnvState(
     val queue: List<String> = emptyList(),
-    val index: Int = -1
+    val index: Int = -1,
 )
 
 class PlaybackQueueManager(context: Context) {
@@ -74,10 +74,10 @@ class PlaybackQueueManager(context: Context) {
                     // Try to maintain existing shuffle order if possible, or just shuffle
                     songsForScope.map { it.id }.shuffled()
                 } else {
-                    songsForScope.sortedWith(getComparator()).map { it.id }
+                    songsForScope.asSequence().sortedWith(getComparator()).map { it.id }.toList()
                 }
                 
-                val newIndex = if (existing != null && existing.index != -1) {
+                val newIndex = if ((existing != null) && (existing.index != -1)) {
                     val currentId = existing.queue.getOrNull(existing.index)
                     newQueue.indexOf(currentId).coerceAtLeast(-1)
                 } else -1
@@ -180,7 +180,7 @@ class PlaybackQueueManager(context: Context) {
         val state = envStates[getCurrentEnvKey()] ?: return
         val unplayedInQueue = state.queue.filter { !playedSongIds.contains(it) }
         
-        if (unplayedInQueue.isEmpty() && state.queue.isNotEmpty()) {
+        if ((unplayedInQueue.isEmpty()) && (state.queue.isNotEmpty())) {
             playedSongIds.clear()
             envStates.keys.forEach { key ->
                 envStates[key] = envStates[key]?.copy(index = -1) ?: EnvState()
@@ -189,8 +189,8 @@ class PlaybackQueueManager(context: Context) {
         }
     }
 
-    fun getNextTrack(): MusicFile? {
-        if (isSingleRepeat) return getCurrentTrack() ?: findFirstUnplayed()
+    fun getNextTrack(isManual: Boolean = false): MusicFile? {
+        if ((isSingleRepeat) && (!isManual)) return getCurrentTrack() ?: findFirstUnplayed()
 
         val key = getCurrentEnvKey()
         val state = envStates[key] ?: return null
@@ -199,7 +199,15 @@ class PlaybackQueueManager(context: Context) {
 
         if (queue.isEmpty()) return null
 
-        // Try to find next unplayed in the CURRENT queue
+        if (isManual) {
+            // Manual Next: Just go to the literal next track, wrapping around if needed
+            val nextIndex = (index + 1) % queue.size
+            envStates[key] = state.copy(index = nextIndex)
+            saveState()
+            return allSongs.find { it.id == queue[nextIndex] }
+        }
+
+        // Auto Next: Smart Skip logic
         var foundIndex = -1
         for (i in (index + 1) until queue.size) {
             if (!playedSongIds.contains(queue[i])) {
@@ -254,7 +262,7 @@ class PlaybackQueueManager(context: Context) {
         } else null
     }
 
-    fun skipToNext(): MusicFile? = getNextTrack()
+    fun skipToNext(): MusicFile? = getNextTrack(isManual = true)
 
     fun playTrackById(id: String): MusicFile? {
         val key = getCurrentEnvKey()
@@ -310,6 +318,4 @@ class PlaybackQueueManager(context: Context) {
         val state = envStates[getCurrentEnvKey()] ?: return emptyList()
         return state.queue.mapNotNull { id -> allSongs.find { it.id == id } }
     }
-
-    fun getAllSongs(): List<MusicFile> = allSongs
 }
