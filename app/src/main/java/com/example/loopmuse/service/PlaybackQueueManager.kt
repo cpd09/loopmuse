@@ -33,6 +33,9 @@ class PlaybackQueueManager(context: Context) {
 
     // Global Played History (across scopes)
     private var playedSongIds: MutableSet<String> = mutableSetOf()
+    
+    // Per-track positions (Resume)
+    private var trackPositions: MutableMap<String, Long> = mutableMapOf()
 
     // Current State
     var currentScope: PlaybackScope = PlaybackScope.ALL
@@ -74,9 +77,11 @@ class PlaybackQueueManager(context: Context) {
         pendingRepeatMode = null
         
         allQueue = allSongs
+            .asSequence()
             .sortedByDescending { it.dateAdded }
             .map { it.id }
-        allCurrentIndex = -1
+            .toList()
+        allCurrentIndex = if (allQueue.isNotEmpty()) 0 else -1
         
         saveState()
     }
@@ -90,11 +95,11 @@ class PlaybackQueueManager(context: Context) {
         val addedIds = newIds.filter { !oldSongsMap.containsKey(it) }
         
         val updatedQueue = if (repeatMode == RepeatMode.SHUFFLE) {
-            val playedPart = if (currentIndex >= 0 && currentIndex < existingIdsInQueue.size) {
+            val playedPart = if ((currentIndex >= 0) && (currentIndex < existingIdsInQueue.size)) {
                 existingIdsInQueue.subList(0, currentIndex + 1)
             } else emptyList()
             
-            val unplayedPart = if (currentIndex + 1 < existingIdsInQueue.size) {
+            val unplayedPart = if ((currentIndex + 1) < existingIdsInQueue.size) {
                 existingIdsInQueue.subList(currentIndex + 1, existingIdsInQueue.size)
             } else emptyList()
             
@@ -102,8 +107,10 @@ class PlaybackQueueManager(context: Context) {
             playedPart + newUnplayedPart
         } else {
             newSongsMap.values
+                .asSequence()
                 .sortedWith(getComparator())
                 .map { it.id }
+                .toList()
         }
 
         if (scope == PlaybackScope.ALL) {
@@ -125,8 +132,10 @@ class PlaybackQueueManager(context: Context) {
 
     private fun updateRecentQueue(newSongsMap: Map<String, MusicFile>, oldSongsMap: Map<String, MusicFile>) {
         val recentSongs = newSongsMap.values
+            .asSequence()
             .sortedByDescending { it.dateAdded }
             .take(recentLimit)
+            .toList()
             .associateBy { it.id }
             
         updateQueue(PlaybackScope.RECENT, recentSongs, oldSongsMap)
@@ -196,12 +205,19 @@ class PlaybackQueueManager(context: Context) {
         saveState()
     }
 
+    fun saveTrackPosition(id: String, position: Long) {
+        trackPositions[id] = position
+        saveState()
+    }
+
+    fun getTrackPosition(id: String): Long {
+        return trackPositions[id] ?: 0L
+    }
+
     fun addToHistory(id: String) {
         playedSongIds.add(id)
         saveState()
     }
-
-    fun isPlayed(id: String): Boolean = playedSongIds.contains(id)
 
     fun getPlayedSongIds(): Set<String> = playedSongIds.toSet()
 
@@ -256,7 +272,7 @@ class PlaybackQueueManager(context: Context) {
 
         if (queue.isEmpty()) return null
 
-        if (index >= queue.size - 1) {
+        if (index >= (queue.size - 1)) {
             checkAndAutoResetHistory()
             return findFirstUnplayed()
         }
@@ -377,6 +393,7 @@ class PlaybackQueueManager(context: Context) {
             putBoolean("is_single_repeat", isSingleRepeat)
             putString("pending_scope", pendingScope?.name)
             putString("pending_repeat_mode", pendingRepeatMode?.name)
+            putString("track_positions", gson.toJson(trackPositions))
             apply()
         }
     }
@@ -395,10 +412,13 @@ class PlaybackQueueManager(context: Context) {
         isSingleRepeat = prefs.getBoolean("is_single_repeat", false)
         
         val pScope = prefs.getString("pending_scope", null)
-        pendingScope = if (pScope != null) PlaybackScope.valueOf(pScope) else null
+        pendingScope = pScope?.let { PlaybackScope.valueOf(it) }
         
         val pMode = prefs.getString("pending_repeat_mode", null)
-        pendingRepeatMode = if (pMode != null) RepeatMode.valueOf(pMode) else null
+        pendingRepeatMode = pMode?.let { RepeatMode.valueOf(it) }
+        
+        val positionsJson = prefs.getString("track_positions", "{}")
+        trackPositions = gson.fromJson(positionsJson, object : TypeToken<MutableMap<String, Long>>() {}.type) ?: mutableMapOf()
     }
     
     fun getRecentSongs(): List<MusicFile> {
@@ -410,6 +430,4 @@ class PlaybackQueueManager(context: Context) {
         val queue = getActiveQueue()
         return queue.mapNotNull { id -> allSongs.find { it.id == id } }
     }
-
-    fun getAllSongs(): List<MusicFile> = allSongs
 }

@@ -1,7 +1,6 @@
 package com.example.loopmuse.service
 
 import android.app.*
-import android.content.Context
 import android.content.Intent
 import android.media.MediaPlayer
 import android.os.Binder
@@ -12,6 +11,7 @@ import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.edit
 import com.example.loopmuse.MainActivity
 import com.example.loopmuse.data.MusicFile
 import com.example.loopmuse.data.PlaybackScope
@@ -53,7 +53,7 @@ class MusicPlaybackService : Service() {
     
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     
-    private val _isPlaying = MutableStateFlow(false)
+    private val _isPlaying = MutableStateFlow(value = false)
     val isPlaying: StateFlow<Boolean> = _isPlaying
     
     private val _currentTrack = MutableStateFlow<MusicFile?>(null)
@@ -65,7 +65,7 @@ class MusicPlaybackService : Service() {
     private val _playbackScope = MutableStateFlow(PlaybackScope.ALL)
     val playbackScope: StateFlow<PlaybackScope> = _playbackScope
 
-    private val _isSingleRepeat = MutableStateFlow(false)
+    private val _isSingleRepeat = MutableStateFlow(value = false)
     val isSingleRepeat: StateFlow<Boolean> = _isSingleRepeat
 
     private val _pendingScope = MutableStateFlow<PlaybackScope?>(null)
@@ -80,6 +80,15 @@ class MusicPlaybackService : Service() {
     private val _playedSongIds = MutableStateFlow<Set<String>>(emptySet())
     val playedSongIds: StateFlow<Set<String>> = _playedSongIds
     
+    private val _allSongs = MutableStateFlow<List<MusicFile>>(emptyList())
+    val allSongs: StateFlow<List<MusicFile>> = _allSongs
+
+    private val _currentPosition = MutableStateFlow(0L)
+    val currentPosition: StateFlow<Long> = _currentPosition
+
+    private val _duration = MutableStateFlow(0L)
+    val duration: StateFlow<Long> = _duration
+
     private val _songCounts = MutableStateFlow("Loading...")
     val songCounts: StateFlow<String> = _songCounts
     
@@ -100,24 +109,44 @@ class MusicPlaybackService : Service() {
         _pendingScope.value = queueManager.pendingScope
         _pendingRepeatMode.value = queueManager.pendingRepeatMode
         _playedSongIds.value = queueManager.getPlayedSongIds()
+        _allSongs.value = queueManager.getActiveQueueSongs()
         
+        // Prepare initial track from manager
+        queueManager.getCurrentTrack()?.let { track ->
+            _currentTrack.value = track
+        }
+
         loadSelectedItems()
         
         createNotificationChannel()
         initializeMediaSession()
+        startPositionUpdates()
+    }
+
+    private fun startPositionUpdates() {
+        serviceScope.launch {
+            while (isActive) {
+                if (_isPlaying.value) {
+                    mediaPlayer?.let {
+                        _currentPosition.value = it.currentPosition.toLong()
+                        _duration.value = it.duration.toLong()
+                    }
+                }
+                delay(1000)
+            }
+        }
     }
 
     private fun loadSelectedItems() {
-        val prefs = getSharedPreferences("music_prefs", Context.MODE_PRIVATE)
-        val json = prefs.getString("selected_items", null)
-        if (json != null) {
+        val prefs = getSharedPreferences("music_prefs", MODE_PRIVATE)
+        prefs.getString("selected_items", null)?.let { json ->
             selectedItems = Gson().fromJson(json, object : TypeToken<List<SelectionItem>>() {}.type)
         }
     }
 
     private fun saveSelectedItems() {
-        val prefs = getSharedPreferences("music_prefs", Context.MODE_PRIVATE)
-        prefs.edit().putString("selected_items", Gson().toJson(selectedItems)).apply()
+        val prefs = getSharedPreferences("music_prefs", MODE_PRIVATE)
+        prefs.edit { putString("selected_items", Gson().toJson(selectedItems)) }
     }
     
     override fun onBind(intent: Intent): IBinder {
@@ -146,38 +175,40 @@ class MusicPlaybackService : Service() {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "Music Playback",
-                NotificationManager.IMPORTANCE_LOW
+                NotificationManager.IMPORTANCE_LOW,
             ).apply {
                 description = "Controls for music playback"
                 setShowBadge(false)
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             }
             
-            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
             notificationManager.createNotificationChannel(channel)
         }
     }
     
     private fun initializeMediaSession() {
         mediaSession = MediaSessionCompat(this, "MusicPlaybackService").apply {
-            setCallback(object : MediaSessionCompat.Callback() {
-                override fun onPlay() {
-                    resumePlayback()
-                }
-                
-                override fun onPause() {
-                    pausePlayback()
-                }
-                
-                override fun onSkipToNext() {
-                    playNext()
-                }
-                
-                override fun onStop() {
-                    stopService()
-                }
-            })
-            
+            setCallback(
+                object : MediaSessionCompat.Callback() {
+                    override fun onPlay() {
+                        resumePlayback()
+                    }
+
+                    override fun onPause() {
+                        pausePlayback()
+                    }
+
+                    override fun onSkipToNext() {
+                        playNext()
+                    }
+
+                    override fun onStop() {
+                        stopService()
+                    }
+                },
+            )
+
             isActive = true
         }
     }
@@ -191,6 +222,18 @@ class MusicPlaybackService : Service() {
         if (itemsChanged || isFirstTimeSet) {
             stopCurrentSong()
             queueManager.resetToDefault()
+            
+            // Sync service flows with manager's new default state
+            _repeatMode.value = queueManager.repeatMode
+            _playbackScope.value = queueManager.currentScope
+            _isSingleRepeat.value = queueManager.isSingleRepeat
+            _pendingScope.value = queueManager.pendingScope
+            _pendingRepeatMode.value = queueManager.pendingRepeatMode
+            _allSongs.value = queueManager.getActiveQueueSongs()
+            
+            // Set initial track for UI display
+            queueManager.getCurrentTrack()?.let { _currentTrack.value = it }
+
             invalidateCache()
             serviceScope.launch {
                 updateSongCounts()
@@ -200,12 +243,6 @@ class MusicPlaybackService : Service() {
 
     fun getSelectedItems(): List<SelectionItem> = selectedItems
 
-    fun forceUpdateSongCounts() {
-        serviceScope.launch {
-            updateSongCounts()
-        }
-    }
-    
     private fun invalidateCache() {
         cachedAllSongs = emptyList()
         lastScanTime = 0
@@ -214,7 +251,7 @@ class MusicPlaybackService : Service() {
     private suspend fun getCachedOrScanSongs(): List<MusicFile> {
         val currentTime = System.currentTimeMillis()
         
-        return if (cachedAllSongs.isNotEmpty() && (currentTime - lastScanTime) < scanCacheTimeout) {
+        return if (cachedAllSongs.isNotEmpty() && ((currentTime - lastScanTime) < scanCacheTimeout)) {
             // Use cached results if available and not expired
             cachedAllSongs
         } else {
@@ -233,13 +270,14 @@ class MusicPlaybackService : Service() {
         serviceScope.launch {
             try {
                 val songs = getCachedOrScanSongs()
+                _allSongs.value = queueManager.getActiveQueueSongs()
                 val total = songs.size
                 _songCounts.value = if (queueManager.currentScope == PlaybackScope.ALL) {
                     "$total total songs"
                 } else {
                     "Recent ${queueManager.getRecentSongs().size} songs"
                 }
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 _songCounts.value = "Error loading song counts"
             }
         }
@@ -248,11 +286,9 @@ class MusicPlaybackService : Service() {
     fun playRandomUnplayedSong(): Boolean {
         // This is now "Start Playback"
         val track = queueManager.getCurrentTrack() ?: queueManager.getNextTrack()
-        return if (track != null) {
-            playSong(track)
-        } else {
-            false
-        }
+        return track?.let {
+            playSong(it)
+        } ?: false
     }
     
     fun setRepeatMode(mode: RepeatMode) {
@@ -288,17 +324,34 @@ class MusicPlaybackService : Service() {
 
     fun toggleSort(criteria: SortCriteria) {
         queueManager.toggleSort(criteria)
+        _allSongs.value = queueManager.getActiveQueueSongs()
+        
+        // If not playing, update the current track to match new queue's start
+        if (!_isPlaying.value) {
+            queueManager.getCurrentTrack()?.let { _currentTrack.value = it }
+        }
+
         serviceScope.launch {
             updateSongCounts()
         }
     }
 
+    fun seekTo(position: Long) {
+        mediaPlayer?.seekTo(position.toInt())
+        _currentPosition.value = position
+    }
+
     fun getSortInfo(): Pair<SortCriteria, SortOrder> = queueManager.sortCriteria to queueManager.sortOrder
 
-    fun getRecentSongs(): List<MusicFile> = queueManager.getRecentSongs()
-    
     private fun playSong(musicFile: MusicFile): Boolean {
         return try {
+            // Save position of previous song
+            currentSong?.let {
+                mediaPlayer?.let { player ->
+                    queueManager.saveTrackPosition(it.id, player.currentPosition.toLong())
+                }
+            }
+
             // Clean up previous media player without clearing track info during transitions
             mediaPlayer?.let { player ->
                 if (player.isPlaying) {
@@ -316,8 +369,15 @@ class MusicPlaybackService : Service() {
                 setDataSource(musicFile.path)
                 prepareAsync()
                 setOnPreparedListener { player ->
+                    // Restore position
+                    val savedPos = queueManager.getTrackPosition(musicFile.id)
+                    if (savedPos > 0 && savedPos < player.duration) {
+                        player.seekTo(savedPos.toInt())
+                    }
+                    
                     player.start()
                     _isPlaying.value = true
+                    _duration.value = player.duration.toLong()
                     currentSong?.let { 
                         queueManager.addToHistory(it.id)
                         updateHistory()
@@ -327,6 +387,9 @@ class MusicPlaybackService : Service() {
                 }
                 setOnCompletionListener {
                     _isPlaying.value = false
+                    // Reset position for this song when finished
+                    currentSong?.let { queueManager.saveTrackPosition(it.id, 0L) }
+                    
                     currentSong?.let { 
                         queueManager.addToHistory(it.id) 
                         updateHistory()
@@ -340,9 +403,9 @@ class MusicPlaybackService : Service() {
                         _pendingScope.value = queueManager.pendingScope
                         _pendingRepeatMode.value = queueManager.pendingRepeatMode
 
-                        if (nextTrack != null) {
-                            playSong(nextTrack)
-                        } else {
+                        nextTrack?.let {
+                            playSong(it)
+                        } ?: run {
                             // End of queue!
                             _queueEnded.emit(Unit)
                             @Suppress("DEPRECATION")
@@ -360,7 +423,7 @@ class MusicPlaybackService : Service() {
                 }
             }
             true
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -412,9 +475,8 @@ class MusicPlaybackService : Service() {
 
     private fun playPrevious() {
         serviceScope.launch {
-            val prevTrack = queueManager.getPreviousTrack()
-            if (prevTrack != null) {
-                playSong(prevTrack)
+            queueManager.getPreviousTrack()?.let {
+                playSong(it)
             }
             launch {
                 updateSongCounts()
@@ -423,6 +485,11 @@ class MusicPlaybackService : Service() {
     }
     
     private fun stopCurrentSong() {
+        currentSong?.let {
+            mediaPlayer?.let { player ->
+                queueManager.saveTrackPosition(it.id, player.currentPosition.toLong())
+            }
+        }
         mediaPlayer?.let { player ->
             if (player.isPlaying) {
                 player.stop()
@@ -447,12 +514,12 @@ class MusicPlaybackService : Service() {
             .setActions(
                 PlaybackStateCompat.ACTION_PLAY_PAUSE or
                 PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
-                PlaybackStateCompat.ACTION_STOP
+                PlaybackStateCompat.ACTION_STOP,
             )
             .setState(
                 if (_isPlaying.value) PlaybackStateCompat.STATE_PLAYING else PlaybackStateCompat.STATE_PAUSED,
                 0L,
-                1f
+                1f,
             )
             .build()
         
@@ -475,7 +542,7 @@ class MusicPlaybackService : Service() {
         }
         val openAppPendingIntent = PendingIntent.getActivity(
             this, 0, openAppIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         
         val playPauseIntent = Intent(this, MusicPlaybackService::class.java).apply {
@@ -570,17 +637,6 @@ class MusicPlaybackService : Service() {
 
     private fun updateHistory() {
         _playedSongIds.value = queueManager.getPlayedSongIds()
-    }
-
-    fun isPlayed(id: String): Boolean = queueManager.isPlayed(id)
-    
-    fun getUnplayedCount(): Int {
-        // Using "unplayed" concept as "songs remaining in current queue"
-        return 0 // Simplified for now, or could be (queue.size - index)
-    }
-    
-    fun getTotalSongsCount(): Int {
-        return cachedAllSongs.size
     }
 
     fun getAllSongs(): List<MusicFile> {

@@ -20,10 +20,10 @@ class MusicServiceConnection(private val context: Context) {
     private var musicService: MusicPlaybackService? = null
     private var isBound = false
     
-    private val _isConnected = MutableStateFlow(false)
+    private val _isConnected = MutableStateFlow(value = false)
     val isConnected: StateFlow<Boolean> = _isConnected
     
-    private val _isPlaying = MutableStateFlow(false)
+    private val _isPlaying = MutableStateFlow(value = false)
     val isPlaying: StateFlow<Boolean> = _isPlaying
     
     private val _currentTrack = MutableStateFlow<MusicFile?>(null)
@@ -35,13 +35,19 @@ class MusicServiceConnection(private val context: Context) {
     private val _playedSongIds = MutableStateFlow<Set<String>>(emptySet())
     val playedSongIds: StateFlow<Set<String>> = _playedSongIds
 
+    private val _currentPosition = MutableStateFlow(0L)
+    val currentPosition: StateFlow<Long> = _currentPosition
+
+    private val _duration = MutableStateFlow(0L)
+    val duration: StateFlow<Long> = _duration
+
     private val _repeatMode = MutableStateFlow(RepeatMode.SHUFFLE)
     val repeatMode: StateFlow<RepeatMode> = _repeatMode
 
     private val _playbackScope = MutableStateFlow(PlaybackScope.ALL)
     val playbackScope: StateFlow<PlaybackScope> = _playbackScope
 
-    private val _isSingleRepeat = MutableStateFlow(false)
+    private val _isSingleRepeat = MutableStateFlow(value = false)
     val isSingleRepeat: StateFlow<Boolean> = _isSingleRepeat
 
     private val _pendingScope = MutableStateFlow<PlaybackScope?>(null)
@@ -77,8 +83,23 @@ class MusicServiceConnection(private val context: Context) {
                         }
                     }
                     launch {
+                        service.allSongs.collect { songs ->
+                            _allSongs.value = songs
+                        }
+                    }
+                    launch {
                         service.playedSongIds.collect { ids ->
                             _playedSongIds.value = ids
+                        }
+                    }
+                    launch {
+                        service.currentPosition.collect { pos ->
+                            _currentPosition.value = pos
+                        }
+                    }
+                    launch {
+                        service.duration.collect { dur ->
+                            _duration.value = dur
                         }
                     }
                     launch {
@@ -92,8 +113,8 @@ class MusicServiceConnection(private val context: Context) {
                         }
                     }
                     launch {
-                        service.isSingleRepeat.collect { val_ ->
-                            _isSingleRepeat.value = val_
+                        service.isSingleRepeat.collect { value ->
+                            _isSingleRepeat.value = value
                         }
                     }
                     launch {
@@ -114,8 +135,6 @@ class MusicServiceConnection(private val context: Context) {
                     launch {
                         service.songCounts.collect { counts ->
                             _songCounts.value = counts
-                            // Update allSongs when counts change (implying a scan finished)
-                            _allSongs.value = service.getAllSongs()
                         }
                     }
                 }
@@ -151,11 +170,7 @@ class MusicServiceConnection(private val context: Context) {
         return musicService?.getSelectedItems() ?: emptyList()
     }
     
-    fun refreshSongCounts() {
-        musicService?.forceUpdateSongCounts()
-    }
-    
-    suspend fun playRandomUnplayedSong(): Boolean {
+    fun playRandomUnplayedSong(): Boolean {
         return musicService?.playRandomUnplayedSong() ?: false
     }
     
@@ -180,13 +195,6 @@ class MusicServiceConnection(private val context: Context) {
         context.startService(intent)
     }
     
-    fun stopService() {
-        val intent = Intent(context, MusicPlaybackService::class.java).apply {
-            action = MusicPlaybackService.ACTION_STOP
-        }
-        context.startService(intent)
-    }
-    
     fun clearPlaybackHistory() {
         musicService?.clearPlaybackHistory()
     }
@@ -195,11 +203,13 @@ class MusicServiceConnection(private val context: Context) {
         musicService?.toggleSort(criteria)
     }
 
+    fun seekTo(position: Long) {
+        musicService?.seekTo(position)
+    }
+
     fun getSortInfo(): Pair<SortCriteria, SortOrder> {
         return musicService?.getSortInfo() ?: (SortCriteria.DATE to SortOrder.DESCENDING)
     }
-
-    fun isPlayed(id: String): Boolean = musicService?.isPlayed(id) ?: false
 
     fun setRepeatMode(mode: RepeatMode) {
         musicService?.setRepeatMode(mode)
