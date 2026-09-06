@@ -65,6 +65,15 @@ class MusicPlaybackService : Service() {
     private val _playbackScope = MutableStateFlow(PlaybackScope.ALL)
     val playbackScope: StateFlow<PlaybackScope> = _playbackScope
 
+    private val _isSingleRepeat = MutableStateFlow(false)
+    val isSingleRepeat: StateFlow<Boolean> = _isSingleRepeat
+
+    private val _pendingScope = MutableStateFlow<PlaybackScope?>(null)
+    val pendingScope: StateFlow<PlaybackScope?> = _pendingScope
+
+    private val _pendingRepeatMode = MutableStateFlow<RepeatMode?>(null)
+    val pendingRepeatMode: StateFlow<RepeatMode?> = _pendingRepeatMode
+
     private val _queueEnded = MutableSharedFlow<Unit>()
     val queueEnded: SharedFlow<Unit> = _queueEnded
 
@@ -87,6 +96,9 @@ class MusicPlaybackService : Service() {
         
         _repeatMode.value = queueManager.repeatMode
         _playbackScope.value = queueManager.currentScope
+        _isSingleRepeat.value = queueManager.isSingleRepeat
+        _pendingScope.value = queueManager.pendingScope
+        _pendingRepeatMode.value = queueManager.pendingRepeatMode
         _playedSongIds.value = queueManager.getPlayedSongIds()
         
         loadSelectedItems()
@@ -177,7 +189,8 @@ class MusicPlaybackService : Service() {
         saveSelectedItems()
         
         if (itemsChanged || isFirstTimeSet) {
-            // 폴더가 변경되거나 최초 설정 시 캐시 무효화 및 곡 수 업데이트
+            stopCurrentSong()
+            queueManager.resetToDefault()
             invalidateCache()
             serviceScope.launch {
                 updateSongCounts()
@@ -243,17 +256,20 @@ class MusicPlaybackService : Service() {
     }
     
     fun setRepeatMode(mode: RepeatMode) {
-        queueManager.resetActiveQueue(mode)
-        _repeatMode.value = mode
+        queueManager.requestPendingRepeatMode(mode)
+        _pendingRepeatMode.value = mode
+        _isSingleRepeat.value = false
     }
 
     fun setPlaybackScope(scope: PlaybackScope) {
-        stopCurrentSong()
-        queueManager.currentScope = scope
-        _playbackScope.value = scope
-        serviceScope.launch {
-            updateSongCounts()
-        }
+        queueManager.requestPendingScope(scope)
+        _pendingScope.value = scope
+        _isSingleRepeat.value = false
+    }
+
+    fun toggleSingleRepeat() {
+        queueManager.toggleSingleRepeat()
+        _isSingleRepeat.value = queueManager.isSingleRepeat
     }
 
     fun setRecentLimit(limit: Int) {
@@ -269,6 +285,15 @@ class MusicPlaybackService : Service() {
             playSong(it)
         }
     }
+
+    fun toggleSort(criteria: SortCriteria) {
+        queueManager.toggleSort(criteria)
+        serviceScope.launch {
+            updateSongCounts()
+        }
+    }
+
+    fun getSortInfo(): Pair<SortCriteria, SortOrder> = queueManager.sortCriteria to queueManager.sortOrder
 
     fun getRecentSongs(): List<MusicFile> = queueManager.getRecentSongs()
     
@@ -308,6 +333,13 @@ class MusicPlaybackService : Service() {
                     }
                     serviceScope.launch {
                         val nextTrack = queueManager.getNextTrack()
+                        
+                        // Update states in case promotion happened
+                        _repeatMode.value = queueManager.repeatMode
+                        _playbackScope.value = queueManager.currentScope
+                        _pendingScope.value = queueManager.pendingScope
+                        _pendingRepeatMode.value = queueManager.pendingRepeatMode
+
                         if (nextTrack != null) {
                             playSong(nextTrack)
                         } else {
@@ -360,6 +392,13 @@ class MusicPlaybackService : Service() {
     private fun playNext() {
         serviceScope.launch {
             val nextTrack = queueManager.skipToNext()
+            
+            // Update states in case promotion happened
+            _repeatMode.value = queueManager.repeatMode
+            _playbackScope.value = queueManager.currentScope
+            _pendingScope.value = queueManager.pendingScope
+            _pendingRepeatMode.value = queueManager.pendingRepeatMode
+
             if (nextTrack != null) {
                 playSong(nextTrack)
             } else {

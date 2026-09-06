@@ -41,6 +41,15 @@ class MusicServiceConnection(private val context: Context) {
     private val _playbackScope = MutableStateFlow(PlaybackScope.ALL)
     val playbackScope: StateFlow<PlaybackScope> = _playbackScope
 
+    private val _isSingleRepeat = MutableStateFlow(false)
+    val isSingleRepeat: StateFlow<Boolean> = _isSingleRepeat
+
+    private val _pendingScope = MutableStateFlow<PlaybackScope?>(null)
+    val pendingScope: StateFlow<PlaybackScope?> = _pendingScope
+
+    private val _pendingRepeatMode = MutableStateFlow<RepeatMode?>(null)
+    val pendingRepeatMode: StateFlow<RepeatMode?> = _pendingRepeatMode
+
     private val _queueEnded = MutableSharedFlow<Unit>()
     val queueEnded: SharedFlow<Unit> = _queueEnded
     
@@ -80,6 +89,21 @@ class MusicServiceConnection(private val context: Context) {
                     launch {
                         service.playbackScope.collect { scope ->
                             _playbackScope.value = scope
+                        }
+                    }
+                    launch {
+                        service.isSingleRepeat.collect { val_ ->
+                            _isSingleRepeat.value = val_
+                        }
+                    }
+                    launch {
+                        service.pendingScope.collect { scope ->
+                            _pendingScope.value = scope
+                        }
+                    }
+                    launch {
+                        service.pendingRepeatMode.collect { mode ->
+                            _pendingRepeatMode.value = mode
                         }
                     }
                     launch {
@@ -167,6 +191,14 @@ class MusicServiceConnection(private val context: Context) {
         musicService?.clearPlaybackHistory()
     }
 
+    fun toggleSort(criteria: SortCriteria) {
+        musicService?.toggleSort(criteria)
+    }
+
+    fun getSortInfo(): Pair<SortCriteria, SortOrder> {
+        return musicService?.getSortInfo() ?: (SortCriteria.DATE to SortOrder.DESCENDING)
+    }
+
     fun isPlayed(id: String): Boolean = musicService?.isPlayed(id) ?: false
 
     fun setRepeatMode(mode: RepeatMode) {
@@ -179,6 +211,10 @@ class MusicServiceConnection(private val context: Context) {
 
     fun setRecentLimit(limit: Int) {
         musicService?.setRecentLimit(limit)
+    }
+
+    fun toggleSingleRepeat() {
+        musicService?.toggleSingleRepeat()
     }
 
     fun playTrackById(id: String) {
