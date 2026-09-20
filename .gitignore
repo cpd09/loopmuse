@@ -96,3 +96,6 @@ release/
 
 # NDK
 obj/
+
+# LoopMuse Project Private Docs
+ai_context.md

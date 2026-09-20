@@ -6,8 +6,6 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
 import com.example.loopmuse.data.MusicFile
-import com.example.loopmuse.data.PlaybackScope
-import com.example.loopmuse.data.RepeatMode
 import com.example.loopmuse.data.SelectionItem
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,8 +27,26 @@ class MusicServiceConnection(private val context: Context) {
     private val _currentTrack = MutableStateFlow<MusicFile?>(null)
     val currentTrack: StateFlow<MusicFile?> = _currentTrack
 
-    private val _allSongs = MutableStateFlow<List<MusicFile>>(emptyList())
-    val allSongs: StateFlow<List<MusicFile>> = _allSongs
+    private val _allSongsInQueue = MutableStateFlow<List<MusicFile>>(emptyList())
+    val allSongsInQueue: StateFlow<List<MusicFile>> = _allSongsInQueue
+
+    private val _playlistState = MutableStateFlow<PlaylistState?>(null)
+    val playlistState: StateFlow<PlaylistState?> = _playlistState
+
+    private val _allPlaylists = MutableStateFlow<List<PlaylistState>>(emptyList())
+    val allPlaylists: StateFlow<List<PlaylistState>> = _allPlaylists
+
+    private val _isSelectionMode = MutableStateFlow(value = false)
+    val isSelectionMode: StateFlow<Boolean> = _isSelectionMode
+
+    private val _isSelectionPlayback = MutableStateFlow(value = false)
+    val isSelectionPlayback: StateFlow<Boolean> = _isSelectionPlayback
+
+    private val _isTasteMode = MutableStateFlow(value = false)
+    val isTasteMode: StateFlow<Boolean> = _isTasteMode
+
+    private val _selectedIds = MutableStateFlow<Set<String>>(emptySet())
+    val selectedIds: StateFlow<Set<String>> = _selectedIds
 
     private val _playedSongIds = MutableStateFlow<Set<String>>(emptySet())
     val playedSongIds: StateFlow<Set<String>> = _playedSongIds
@@ -41,19 +57,10 @@ class MusicServiceConnection(private val context: Context) {
     private val _duration = MutableStateFlow(0L)
     val duration: StateFlow<Long> = _duration
 
-    private val _repeatMode = MutableStateFlow(RepeatMode.SHUFFLE)
-    val repeatMode: StateFlow<RepeatMode> = _repeatMode
-
-    private val _playbackScope = MutableStateFlow(PlaybackScope.ALL)
-    val playbackScope: StateFlow<PlaybackScope> = _playbackScope
-
-    private val _isSingleRepeat = MutableStateFlow(value = false)
-    val isSingleRepeat: StateFlow<Boolean> = _isSingleRepeat
-
     private val _queueEnded = MutableSharedFlow<Unit>()
     val queueEnded: SharedFlow<Unit> = _queueEnded
     
-    private val _songCounts = MutableStateFlow("Loading...")
+    private val _songCounts = MutableStateFlow("0곡")
     val songCounts: StateFlow<String> = _songCounts
     
     private val serviceConnection = object : ServiceConnection {
@@ -63,64 +70,22 @@ class MusicServiceConnection(private val context: Context) {
             isBound = true
             _isConnected.value = true
             
-            // Start observing service state
-            musicService?.let { service ->
+            musicService?.let { s ->
                 kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).apply {
-                    launch {
-                        service.isPlaying.collect { playing ->
-                            _isPlaying.value = playing
-                        }
-                    }
-                    launch {
-                        service.currentTrack.collect { track ->
-                            _currentTrack.value = track
-                        }
-                    }
-                    launch {
-                        service.allSongs.collect { songs ->
-                            _allSongs.value = songs
-                        }
-                    }
-                    launch {
-                        service.playedSongIds.collect { ids ->
-                            _playedSongIds.value = ids
-                        }
-                    }
-                    launch {
-                        service.currentPosition.collect { pos ->
-                            _currentPosition.value = pos
-                        }
-                    }
-                    launch {
-                        service.duration.collect { dur ->
-                            _duration.value = dur
-                        }
-                    }
-                    launch {
-                        service.repeatMode.collect { mode ->
-                            _repeatMode.value = mode
-                        }
-                    }
-                    launch {
-                        service.playbackScope.collect { scope ->
-                            _playbackScope.value = scope
-                        }
-                    }
-                    launch {
-                        service.isSingleRepeat.collect { value ->
-                            _isSingleRepeat.value = value
-                        }
-                    }
-                    launch {
-                        service.queueEnded.collect {
-                            _queueEnded.emit(Unit)
-                        }
-                    }
-                    launch {
-                        service.songCounts.collect { counts ->
-                            _songCounts.value = counts
-                        }
-                    }
+                    launch { s.isPlaying.collect { _isPlaying.value = it } }
+                    launch { s.currentTrack.collect { _currentTrack.value = it } }
+                    launch { s.playlistState.collect { _playlistState.value = it } }
+                    launch { s.allPlaylists.collect { _allPlaylists.value = it } }
+                    launch { s.allSongsInQueue.collect { _allSongsInQueue.value = it } }
+                    launch { s.isSelectionMode.collect { _isSelectionMode.value = it } }
+                    launch { s.isSelectionPlayback.collect { _isSelectionPlayback.value = it } }
+                    launch { s.isTasteMode.collect { _isTasteMode.value = it } }
+                    launch { s.selectedIds.collect { _selectedIds.value = it } }
+                    launch { s.playedSongIds.collect { _playedSongIds.value = it } }
+                    launch { s.currentPosition.collect { _currentPosition.value = it } }
+                    launch { s.duration.collect { _duration.value = it } }
+                    launch { s.queueEnded.collect { _queueEnded.emit(Unit) } }
+                    launch { s.songCounts.collect { _songCounts.value = it } }
                 }
             }
         }
@@ -146,76 +111,29 @@ class MusicServiceConnection(private val context: Context) {
         }
     }
     
-    fun setSelectedItems(items: List<SelectionItem>) {
-        musicService?.setSelectedItems(items)
-    }
-
-    fun getSelectedItems(): List<SelectionItem> {
-        return musicService?.getSelectedItems() ?: emptyList()
-    }
+    fun setSelectedItems(items: List<SelectionItem>) { musicService?.setSelectedItems(items) }
+    fun getSelectedItems(): List<SelectionItem> = musicService?.getSelectedItems() ?: emptyList()
+    fun togglePlayPause() { context.startService(Intent(context, MusicPlaybackService::class.java).apply { action = MusicPlaybackService.ACTION_PLAY_PAUSE }) }
+    fun playNext() { context.startService(Intent(context, MusicPlaybackService::class.java).apply { action = MusicPlaybackService.ACTION_NEXT }) }
+    fun playPrevious() { context.startService(Intent(context, MusicPlaybackService::class.java).apply { action = MusicPlaybackService.ACTION_PREVIOUS }) }
+    fun clearPlaybackHistory() { musicService?.clearPlaybackHistory() }
+    fun globalReset() { musicService?.globalReset() }
+    fun toggleSort(criteria: SortCriteria) { musicService?.toggleSort(criteria) }
+    fun seekTo(position: Long) { musicService?.seekTo(position) }
+    fun getSortInfo(): Pair<SortCriteria, SortOrder> = musicService?.getSortInfo() ?: (SortCriteria.DATE to SortOrder.DESCENDING)
     
-    fun playRandomUnplayedSong(): Boolean {
-        return musicService?.playRandomUnplayedSong() ?: false
-    }
-    
-    fun togglePlayPause() {
-        val intent = Intent(context, MusicPlaybackService::class.java).apply {
-            action = MusicPlaybackService.ACTION_PLAY_PAUSE
-        }
-        context.startService(intent)
-    }
-    
-    fun playNext() {
-        val intent = Intent(context, MusicPlaybackService::class.java).apply {
-            action = MusicPlaybackService.ACTION_NEXT
-        }
-        context.startService(intent)
-    }
-
-    fun playPrevious() {
-        val intent = Intent(context, MusicPlaybackService::class.java).apply {
-            action = MusicPlaybackService.ACTION_PREVIOUS
-        }
-        context.startService(intent)
-    }
-    
-    fun clearPlaybackHistory() {
-        musicService?.clearPlaybackHistory()
-    }
-
-    fun toggleSort(criteria: SortCriteria) {
-        musicService?.toggleSort(criteria)
-    }
-
-    fun seekTo(position: Long) {
-        musicService?.seekTo(position)
-    }
-
-    fun getSortInfo(): Pair<SortCriteria, SortOrder> {
-        return musicService?.getSortInfo() ?: (SortCriteria.DATE to SortOrder.DESCENDING)
-    }
-
-    fun setRepeatMode(mode: RepeatMode) {
-        musicService?.setRepeatMode(mode)
-    }
-
-    fun setPlaybackScope(scope: PlaybackScope) {
-        musicService?.setPlaybackScope(scope)
-    }
-
-    fun setRecentLimit(limit: Int) {
-        musicService?.setRecentLimit(limit)
-    }
-
-    fun toggleSingleRepeat() {
-        musicService?.toggleSingleRepeat()
-    }
-
-    fun playTrackById(id: String) {
-        musicService?.playTrackById(id)
-    }
-
-    fun getAllSongs(): List<MusicFile> {
-        return musicService?.getAllSongs() ?: emptyList()
-    }
+    fun toggleRandom() { musicService?.toggleRandom() }
+    fun toggleSmart() { musicService?.toggleSmart() }
+    fun toggleSingleRepeat() { musicService?.toggleSingleRepeat() }
+    fun toggleTasteMode() { musicService?.toggleTasteMode() }
+    fun switchPlaylist(id: String) { musicService?.switchPlaylist(id) }
+    fun addCustomPlaylist(name: String, ids: List<String>) { musicService?.addCustomPlaylist(name, ids) }
+    fun updateCustomPlaylist(id: String, name: String, ids: List<String>) { musicService?.updateCustomPlaylist(id, name, ids) }
+    fun deletePlaylist(id: String) { musicService?.deletePlaylist(id) }
+    fun searchAndCreatePlaylist(query: String, type: String) { musicService?.searchAndCreatePlaylist(query, type) }
+    fun toggleSelectionMode() { musicService?.toggleSelectionMode() }
+    fun toggleSelection(id: String) { musicService?.toggleSelection(id) }
+    fun selectAll() { musicService?.selectAll() }
+    fun clearSelection() { musicService?.clearSelection() }
+    fun playTrackById(id: String) { musicService?.playTrackById(id) }
 }

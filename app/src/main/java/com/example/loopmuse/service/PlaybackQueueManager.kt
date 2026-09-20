@@ -3,319 +3,408 @@ package com.example.loopmuse.service
 import android.content.Context
 import android.content.SharedPreferences
 import com.example.loopmuse.data.MusicFile
-import com.example.loopmuse.data.PlaybackScope
-import com.example.loopmuse.data.RepeatMode
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 
 enum class SortCriteria {
-    FILENAME, DATE
+    FILENAME, DATE, ARTIST, ALBUM
 }
 
 enum class SortOrder {
     ASCENDING, DESCENDING
 }
 
-data class EnvState(
+enum class PlaylistType {
+    PERMANENT, TEMPORARY
+}
+
+/**
+ * Represents the state of a specific playlist.
+ */
+data class PlaylistState(
+    val id: String,
+    val name: String,
+    val type: PlaylistType,
     val queue: List<String> = emptyList(),
-    val index: Int = -1,
+    val currentIndex: Int = -1,
+    val history: List<String> = emptyList(),
+    val historyIndex: Int = -1,
+    val isRandom: Boolean = false,
+    val isSmart: Boolean = true,
+    val isSingleRepeat: Boolean = false,
+    val sortCriteria: SortCriteria = SortCriteria.DATE,
+    val sortOrder: SortOrder = SortOrder.DESCENDING
 )
 
 class PlaybackQueueManager(context: Context) {
-    private val prefs: SharedPreferences = context.getSharedPreferences("playback_queue", Context.MODE_PRIVATE)
+    private val prefs: SharedPreferences = context.getSharedPreferences("playback_queue_v4", Context.MODE_PRIVATE)
     private val gson = Gson()
 
     private var allSongs: List<MusicFile> = emptyList()
     
-    // Multi-verse State: 4 scopes x 2 modes = 8 states
-    private var envStates: MutableMap<String, EnvState> = mutableMapOf()
+    // Playlists: id -> state
+    private var playlists: MutableMap<String, PlaylistState> = mutableMapOf()
+    private var currentPlaylistId: String = "ALL"
 
-    // Global Shared History & Positions
-    private var playedSongIds: MutableSet<String> = mutableSetOf()
-    private var trackPositions: MutableMap<String, Long> = mutableMapOf()
-
-    // Current Active Environment
-    var currentScope: PlaybackScope = PlaybackScope.ALL
-    var repeatMode: RepeatMode = RepeatMode.SHUFFLE
-    
-    var sortCriteria: SortCriteria = SortCriteria.DATE
-    var sortOrder: SortOrder = SortOrder.DESCENDING
-    var isSingleRepeat: Boolean = false
-    var recentLimit: Int = 100
+    // Selection State
+    var selectedIds: MutableSet<String> = mutableSetOf()
+    var isSelectionMode: Boolean = false
+    var isSelectionPlayback: Boolean = false
 
     init {
         loadState()
+        if (!playlists.containsKey("ALL")) {
+            playlists["ALL"] = PlaylistState("ALL", "전체곡", PlaylistType.PERMANENT)
+        }
     }
-
-    private fun getEnvKey(scope: PlaybackScope, mode: RepeatMode): String {
-        return "${scope.name}_${mode.name}"
-    }
-
-    private fun getCurrentEnvKey() = getEnvKey(currentScope, repeatMode)
 
     fun setAllSongs(songs: List<MusicFile>) {
         allSongs = songs
-        // Re-generate all 8 queues to ensure they are up to date with the new library
         refreshAllQueues()
         saveState()
     }
 
     private fun refreshAllQueues() {
-        val scopes = listOf(PlaybackScope.ALL, PlaybackScope.RECENT)
-        val modes = listOf(RepeatMode.SHUFFLE, RepeatMode.SEQUENTIAL)
-        
-        scopes.forEach { s ->
-            modes.forEach { m ->
-                val key = getEnvKey(s, m)
-                val existing = envStates[key]
-                val songsForScope = getSongsForScope(s)
-                
-                val newQueue = if (m == RepeatMode.SHUFFLE) {
-                    // Try to maintain existing shuffle order if possible, or just shuffle
-                    songsForScope.map { it.id }.shuffled()
-                } else {
-                    songsForScope.asSequence().sortedWith(getComparator()).map { it.id }.toList()
-                }
-                
-                val newIndex = if ((existing != null) && (existing.index != -1)) {
-                    val currentId = existing.queue.getOrNull(existing.index)
-                    newQueue.indexOf(currentId).coerceAtLeast(-1)
-                } else -1
-                
-                envStates[key] = EnvState(newQueue, newIndex)
-            }
+        playlists.keys.forEach { id ->
+            updatePlaylistQueue(id)
         }
     }
 
-    fun resetToDefault() {
-        currentScope = PlaybackScope.ALL
-        repeatMode = RepeatMode.SEQUENTIAL
-        sortCriteria = SortCriteria.DATE
-        sortOrder = SortOrder.DESCENDING
-        isSingleRepeat = false
-        
-        // Regenerate everything clean
-        envStates.clear()
-        refreshAllQueues()
-        
-        // Force first song selection
-        val key = getCurrentEnvKey()
-        val state = envStates[key]
-        if (state != null && state.queue.isNotEmpty()) {
-            envStates[key] = state.copy(index = 0)
+    private fun updatePlaylistQueue(id: String) {
+        val state = playlists[id] ?: return
+        val songsInLibrary = if (id == "ALL") allSongs else {
+            allSongs.filter { song -> state.queue.contains(song.id) }
         }
         
+        val newQueue = if (state.isRandom) {
+            val existingIds = state.queue.filter { qId -> songsInLibrary.any { it.id == qId } }
+            val newIds = songsInLibrary.map { it.id }.filter { nId -> !existingIds.contains(nId) }.shuffled()
+            existingIds + newIds
+        } else {
+            songsInLibrary.asSequence()
+                .sortedWith(getComparator(state.sortCriteria, state.sortOrder))
+                .map { it.id }
+                .toList()
+        }
+
+        var newIndex = if (state.currentIndex != -1) {
+            val currentId = state.queue.getOrNull(state.currentIndex)
+            newQueue.indexOf(currentId).coerceAtLeast(-1)
+        } else -1
+
+        if (newIndex == -1 && newQueue.isNotEmpty()) newIndex = 0
+
+        val newHistory = state.history.filter { hId -> songsInLibrary.any { it.id == hId } }
+        val finalHistory = if (newIndex != -1 && newHistory.isEmpty() && newQueue.isNotEmpty()) {
+            listOf(newQueue[newIndex])
+        } else newHistory
+
+        val finalHistoryIndex = if (newIndex != -1 && state.historyIndex == -1 && newQueue.isNotEmpty()) {
+            0
+        } else if (state.historyIndex != -1) {
+            val currentHistId = state.history.getOrNull(state.historyIndex)
+            finalHistory.indexOf(currentHistId).coerceAtLeast(-1)
+        } else -1
+
+        playlists[id] = state.copy(
+            queue = newQueue,
+            currentIndex = newIndex,
+            history = finalHistory,
+            historyIndex = finalHistoryIndex
+        )
+    }
+
+    private fun getComparator(criteria: SortCriteria, order: SortOrder): Comparator<MusicFile> {
+        val base = when (criteria) {
+            SortCriteria.FILENAME -> compareBy<MusicFile> { it.file.name }
+            SortCriteria.DATE -> compareBy<MusicFile> { it.dateAdded }
+            SortCriteria.ARTIST -> compareBy<MusicFile> { it.artist }
+            SortCriteria.ALBUM -> compareBy<MusicFile> { it.album }
+        }
+        return if (order == SortOrder.ASCENDING) base else base.reversed()
+    }
+
+    fun globalReset() {
+        playlists.keys.forEach { id ->
+            val p = playlists[id]
+            if (p != null) {
+                playlists[id] = p.copy(
+                    currentIndex = -1,
+                    history = emptyList(),
+                    historyIndex = -1,
+                    isRandom = false,
+                    isSmart = true,
+                    isSingleRepeat = false,
+                    sortCriteria = SortCriteria.DATE,
+                    sortOrder = SortOrder.DESCENDING
+                )
+                updatePlaylistQueue(id)
+            }
+        }
+        selectedIds.clear()
+        isSelectionMode = false
+        isSelectionPlayback = false
         saveState()
     }
 
-    private fun getSongsForScope(scope: PlaybackScope): List<MusicFile> {
-        return if (scope == PlaybackScope.ALL) allSongs else {
-            allSongs.asSequence().sortedByDescending { it.dateAdded }.take(recentLimit).toList()
-        }
-    }
-
-    private fun getComparator(): Comparator<MusicFile> {
-        val baseComparator = when (sortCriteria) {
-            SortCriteria.FILENAME -> compareBy<MusicFile> { it.title }
-            SortCriteria.DATE -> compareBy<MusicFile> { it.dateAdded }
-        }
-        return if (sortOrder == SortOrder.ASCENDING) baseComparator else baseComparator.reversed()
-    }
-
-    fun switchContext(scope: PlaybackScope, mode: RepeatMode) {
-        currentScope = scope
-        repeatMode = mode
-        isSingleRepeat = false // Clear on context switch
+    fun localReset() {
+        val id = currentPlaylistId
+        val p = playlists[id] ?: return
         
-        val key = getCurrentEnvKey()
-        if (!envStates.containsKey(key)) {
-            refreshAllQueues() // Initialize if missing
+        // 1. Reset standard options to default
+        val resetState = p.copy(
+            currentIndex = -1,
+            history = emptyList(),
+            historyIndex = -1,
+            isRandom = false,
+            isSmart = true,
+            isSingleRepeat = false,
+            sortCriteria = SortCriteria.DATE,
+            sortOrder = SortOrder.DESCENDING
+        )
+        
+        // 2. Apply reset
+        playlists[id] = resetState
+        
+        // 3. Re-sort and find the new first track for Standby
+        updatePlaylistQueue(id)
+        
+        // 4. Force standby on the first track of the newly sorted list
+        val updatedP = playlists[id]
+        if (updatedP != null && updatedP.queue.isNotEmpty()) {
+            playlists[id] = updatedP.copy(
+                currentIndex = 0,
+                history = listOf(updatedP.queue[0]),
+                historyIndex = 0
+            )
         }
+
+        selectedIds.clear()
+        isSelectionMode = false
+        isSelectionPlayback = false
+        saveState()
+    }
+
+    fun resetToDefault() {
+        currentPlaylistId = "ALL"
+        playlists.clear()
+        playlists["ALL"] = PlaylistState("ALL", "전체곡", PlaylistType.PERMANENT, isSmart = true, isRandom = false)
+        refreshAllQueues()
+        val state = playlists["ALL"]
+        if (state != null && state.queue.isNotEmpty()) {
+            playlists["ALL"] = state.copy(currentIndex = 0, history = listOf(state.queue[0]), historyIndex = 0)
+        }
+        selectedIds.clear()
+        isSelectionMode = false
+        isSelectionPlayback = false
+        saveState()
+    }
+
+    fun getCurrentPlaylist(): PlaylistState? = playlists[currentPlaylistId]
+    fun getAllPlaylists(): List<PlaylistState> = playlists.values.sortedBy { if (it.id == "ALL") 0 else 1 }.toList()
+    
+    fun switchPlaylist(id: String) {
+        if (playlists.containsKey(id)) {
+            currentPlaylistId = id
+            saveState()
+        }
+    }
+
+    fun addCustomPlaylist(name: String, ids: List<String>) {
+        val id = "USER_${System.currentTimeMillis()}"
+        playlists[id] = PlaylistState(id, name, PlaylistType.PERMANENT, queue = ids)
+        updatePlaylistQueue(id)
+        saveState()
+    }
+
+    fun updateCustomPlaylist(id: String, name: String, ids: List<String>) {
+        val existing = playlists[id] ?: return
+        playlists[id] = existing.copy(name = name, queue = ids)
+        updatePlaylistQueue(id)
+        saveState()
+    }
+
+    fun deletePlaylist(id: String) {
+        if (id != "ALL") {
+            playlists.remove(id)
+            if (currentPlaylistId == id) currentPlaylistId = "ALL"
+            saveState()
+        }
+    }
+
+    fun setTemporaryPlaylist(name: String, ids: List<String>) {
+        val id = "TEMP"
+        playlists[id] = PlaylistState(id, name, PlaylistType.TEMPORARY, queue = ids)
+        currentPlaylistId = id
+        updatePlaylistQueue(id)
+        saveState()
+    }
+
+    fun toggleRandom() {
+        val p = playlists[currentPlaylistId] ?: return
+        playlists[currentPlaylistId] = p.copy(isRandom = !p.isRandom)
+        updatePlaylistQueue(currentPlaylistId)
+        saveState()
+    }
+
+    fun toggleSmart() {
+        val p = playlists[currentPlaylistId] ?: return
+        playlists[currentPlaylistId] = p.copy(isSmart = !p.isSmart)
+        saveState()
+    }
+
+    fun toggleSingleRepeat() {
+        val p = playlists[currentPlaylistId] ?: return
+        playlists[currentPlaylistId] = p.copy(isSingleRepeat = !p.isSingleRepeat)
         saveState()
     }
 
     fun toggleSort(criteria: SortCriteria) {
-        if (sortCriteria == criteria) {
-            sortOrder = if (sortOrder == SortOrder.ASCENDING) SortOrder.DESCENDING else SortOrder.ASCENDING
-        } else {
-            sortCriteria = criteria
-            sortOrder = SortOrder.ASCENDING
-        }
-        
-        // Refresh sequential queues with new sort
-        refreshAllQueues()
+        val p = playlists[currentPlaylistId] ?: return
+        val newOrder = if (p.sortCriteria == criteria) {
+            if (p.sortOrder == SortOrder.ASCENDING) SortOrder.DESCENDING else SortOrder.ASCENDING
+        } else SortOrder.ASCENDING
+        playlists[currentPlaylistId] = p.copy(sortCriteria = criteria, sortOrder = newOrder)
+        updatePlaylistQueue(currentPlaylistId)
         saveState()
-    }
-
-    fun updateRecentLimit(limit: Int) {
-        if (recentLimit != limit) {
-            recentLimit = limit
-            refreshAllQueues()
-            saveState()
-        }
-    }
-
-    fun toggleSingleRepeat() {
-        isSingleRepeat = !isSingleRepeat
-        saveState()
-    }
-
-    fun addToHistory(id: String) {
-        playedSongIds.add(id)
-        saveState()
-    }
-
-    fun getPlayedSongIds(): Set<String> = playedSongIds.toSet()
-
-    fun clearAllHistory() {
-        playedSongIds.clear()
-        // Reset all indices in all environments to start fresh
-        envStates.keys.forEach { key ->
-            envStates[key] = envStates[key]?.copy(index = -1) ?: EnvState()
-        }
-        saveState()
-    }
-
-    private fun checkAndAutoResetHistory() {
-        val state = envStates[getCurrentEnvKey()] ?: return
-        val unplayedInQueue = state.queue.filter { !playedSongIds.contains(it) }
-        
-        if ((unplayedInQueue.isEmpty()) && (state.queue.isNotEmpty())) {
-            playedSongIds.clear()
-            envStates.keys.forEach { key ->
-                envStates[key] = envStates[key]?.copy(index = -1) ?: EnvState()
-            }
-            saveState()
-        }
     }
 
     fun getNextTrack(isManual: Boolean = false): MusicFile? {
-        if ((isSingleRepeat) && (!isManual)) return getCurrentTrack() ?: findFirstUnplayed()
+        val state = playlists[currentPlaylistId] ?: return null
+        
+        // --- LEVEL 3: 1-Song Repeat (Highest Priority) ---
+        // Even in Selection Playback, if 1-song repeat is on, stay on the current song (auto only)
+        if (state.isSingleRepeat && !isManual) return getCurrentTrack()
 
-        val key = getCurrentEnvKey()
-        val state = envStates[key] ?: return null
-        val queue = state.queue
-        val index = state.index
-
-        if (queue.isEmpty()) return null
-
-        if (isManual) {
-            // Manual Next: Just go to the literal next track, wrapping around if needed
-            val nextIndex = (index + 1) % queue.size
-            envStates[key] = state.copy(index = nextIndex)
-            saveState()
-            return allSongs.find { it.id == queue[nextIndex] }
-        }
-
-        // Auto Next: Smart Skip logic
-        var foundIndex = -1
-        for (i in (index + 1) until queue.size) {
-            if (!playedSongIds.contains(queue[i])) {
-                foundIndex = i
-                break
+        // --- LEVEL 2: Selection Playback ---
+        if (isSelectionPlayback && selectedIds.isNotEmpty()) {
+            val selectedList = state.queue.filter { selectedIds.contains(it) }
+            if (selectedList.isEmpty()) { isSelectionPlayback = false }
+            else {
+                val currentId = state.queue.getOrNull(state.currentIndex)
+                val selIdx = selectedList.indexOf(currentId)
+                val nextId = selectedList[(selIdx + 1) % selectedList.size]
+                return updateCurrentTrackById(nextId)
             }
         }
 
-        return if (foundIndex != -1) {
-            envStates[key] = state.copy(index = foundIndex)
-            saveState()
-            allSongs.find { it.id == queue[foundIndex] }
-        } else {
-            checkAndAutoResetHistory()
-            findFirstUnplayed()
+        // --- LEVEL 1 & Base Navigation (Option A) ---
+        if (state.historyIndex < state.history.size - 1) {
+            val nextIndex = state.historyIndex + 1
+            val nextId = state.history[nextIndex]
+            return updateCurrentTrackById(nextId, isHistoryMove = true, targetHistoryIndex = nextIndex)
         }
+
+        var nextId: String? = null
+        val queue = state.queue
+        if (queue.isEmpty()) return null
+
+        if (state.isRandom) {
+            val candidates = if (state.isSmart) {
+                val histSet = state.history.toSet()
+                queue.filter { !histSet.contains(it) }
+            } else queue
+            nextId = if (candidates.isNotEmpty()) candidates.random() else queue.random()
+        } else {
+            if (state.isSmart) {
+                val histSet = state.history.toSet()
+                for (i in (state.currentIndex + 1) until queue.size) {
+                    if (!histSet.contains(queue[i])) {
+                        nextId = queue[i]
+                        break
+                    }
+                }
+                nextId = nextId ?: queue.firstOrNull { !histSet.contains(it) }
+            } else {
+                nextId = queue[(state.currentIndex + 1) % queue.size]
+            }
+        }
+        return nextId?.let { updateCurrentTrackById(it) }
     }
 
     fun getPreviousTrack(): MusicFile? {
-        val key = getCurrentEnvKey()
-        val state = envStates[key] ?: return null
-        val queue = state.queue
-        var index = state.index
-
-        if (queue.isEmpty()) return null
-
-        index = (index - 1).coerceAtLeast(0)
-        envStates[key] = state.copy(index = index)
-        saveState()
-        return allSongs.find { it.id == queue[index] }
+        val state = playlists[currentPlaylistId] ?: return null
+        if (isSelectionPlayback && selectedIds.isNotEmpty()) {
+            val selectedList = state.queue.filter { selectedIds.contains(it) }
+            val currentId = state.queue.getOrNull(state.currentIndex)
+            val selIdx = selectedList.indexOf(currentId)
+            val prevId = selectedList[if (selIdx <= 0) selectedList.size - 1 else selIdx - 1]
+            return updateCurrentTrackById(prevId)
+        }
+        if (state.historyIndex > 0) {
+            val prevIndex = state.historyIndex - 1
+            val prevId = state.history[prevIndex]
+            return updateCurrentTrackById(prevId, isHistoryMove = true, targetHistoryIndex = prevIndex)
+        }
+        return getCurrentTrack()
     }
 
-    private fun findFirstUnplayed(): MusicFile? {
-        val key = getCurrentEnvKey()
-        val state = envStates[key] ?: return null
-        val queue = state.queue
-        
-        for (i in queue.indices) {
-            if (!playedSongIds.contains(queue[i])) {
-                envStates[key] = state.copy(index = i)
-                saveState()
-                return allSongs.find { it.id == queue[i] }
-            }
+    private fun updateCurrentTrackById(id: String, isHistoryMove: Boolean = false, targetHistoryIndex: Int = -1): MusicFile? {
+        val state = playlists[currentPlaylistId] ?: return null
+        val qIdx = state.queue.indexOf(id)
+        if (qIdx == -1) return null
+
+        val newHistory: List<String>
+        val newHistoryIdx: Int
+        if (isHistoryMove && targetHistoryIndex != -1) {
+            newHistory = state.history
+            newHistoryIdx = targetHistoryIndex
+        } else {
+            val lastId = state.history.lastOrNull()
+            newHistory = if (id != lastId) state.history + id else state.history
+            newHistoryIdx = newHistory.size - 1
         }
-        return null
+        playlists[currentPlaylistId] = state.copy(currentIndex = qIdx, history = newHistory, historyIndex = newHistoryIdx)
+        saveState()
+        return allSongs.find { it.id == id }
     }
 
     fun getCurrentTrack(): MusicFile? {
-        val state = envStates[getCurrentEnvKey()] ?: return null
-        return if (state.index in state.queue.indices) {
-            allSongs.find { it.id == state.queue[state.index] }
-        } else null
+        val s = playlists[currentPlaylistId] ?: return null
+        return if (s.currentIndex in s.queue.indices) allSongs.find { it.id == s.queue[s.currentIndex] } else null
     }
 
-    fun skipToNext(): MusicFile? = getNextTrack(isManual = true)
+    fun playTrackById(id: String): MusicFile? = updateCurrentTrackById(id)
 
-    fun playTrackById(id: String): MusicFile? {
-        val key = getCurrentEnvKey()
-        val state = envStates[key] ?: return null
-        val idx = state.queue.indexOf(id)
-        if (idx != -1) {
-            envStates[key] = state.copy(index = idx)
-            saveState()
-            return allSongs.find { it.id == id }
+    fun toggleSelectionMode() {
+        isSelectionMode = !isSelectionMode
+        if (!isSelectionMode) {
+            clearSelection()
         }
-        return null
     }
 
-    fun saveTrackPosition(id: String, position: Long) {
-        trackPositions[id] = position
-        saveState()
+    fun toggleSelection(id: String) {
+        if (selectedIds.contains(id)) selectedIds.remove(id) else selectedIds.add(id)
+        if (selectedIds.isEmpty()) { isSelectionMode = false; isSelectionPlayback = false }
     }
 
-    fun getTrackPosition(id: String): Long = trackPositions[id] ?: 0L
+    fun selectAll() {
+        val queue = playlists[currentPlaylistId]?.queue ?: emptyList()
+        selectedIds.clear()
+        selectedIds.addAll(queue)
+        isSelectionMode = true
+    }
+
+    fun clearSelection() { selectedIds.clear(); isSelectionMode = false; isSelectionPlayback = false }
 
     private fun saveState() {
         prefs.edit().apply {
-            putString("env_states", gson.toJson(envStates))
-            putString("scope", currentScope.name)
-            putString("repeat_mode", repeatMode.name)
-            putStringSet("played_history", playedSongIds)
-            putString("sort_criteria", sortCriteria.name)
-            putString("sort_order", sortOrder.name)
-            putBoolean("is_single_repeat", isSingleRepeat)
-            putInt("recent_limit", recentLimit)
-            putString("track_positions", gson.toJson(trackPositions))
+            putString("playlists", gson.toJson(playlists.filter { it.value.type == PlaylistType.PERMANENT }))
+            putString("current_id", currentPlaylistId)
             apply()
         }
     }
 
     private fun loadState() {
-        val statesJson = prefs.getString("env_states", "{}")
-        envStates = gson.fromJson(statesJson, object : TypeToken<MutableMap<String, EnvState>>() {}.type) ?: mutableMapOf()
-        
-        currentScope = PlaybackScope.valueOf(prefs.getString("scope", PlaybackScope.ALL.name)!!)
-        repeatMode = RepeatMode.valueOf(prefs.getString("repeat_mode", RepeatMode.SHUFFLE.name)!!)
-        playedSongIds = prefs.getStringSet("played_history", emptySet())?.toMutableSet() ?: mutableSetOf()
-        sortCriteria = SortCriteria.valueOf(prefs.getString("sort_criteria", SortCriteria.DATE.name)!!)
-        sortOrder = SortOrder.valueOf(prefs.getString("sort_order", SortOrder.DESCENDING.name)!!)
-        isSingleRepeat = prefs.getBoolean("is_single_repeat", false)
-        recentLimit = prefs.getInt("recent_limit", 100)
-        
-        val positionsJson = prefs.getString("track_positions", "{}")
-        trackPositions = gson.fromJson(positionsJson, object : TypeToken<MutableMap<String, Long>>() {}.type) ?: mutableMapOf()
+        val json = prefs.getString("playlists", "{}")
+        playlists = gson.fromJson(json, object : TypeToken<MutableMap<String, PlaylistState>>() {}.type) ?: mutableMapOf()
+        currentPlaylistId = prefs.getString("current_id", "ALL") ?: "ALL"
     }
-    
+
     fun getActiveQueueSongs(): List<MusicFile> {
-        val state = envStates[getCurrentEnvKey()] ?: return emptyList()
-        return state.queue.mapNotNull { id -> allSongs.find { it.id == id } }
+        val s = playlists[currentPlaylistId] ?: return emptyList()
+        return s.queue.mapNotNull { qId -> allSongs.find { it.id == qId } }
     }
+
+    fun getPlayedSongIds(): Set<String> = playlists[currentPlaylistId]?.history?.toSet() ?: emptySet()
 }
