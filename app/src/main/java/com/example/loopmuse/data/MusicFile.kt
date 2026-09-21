@@ -13,6 +13,11 @@ data class MusicFile(
     val dateAdded: Long,
     val file: File
 ) {
+    // Generate a fingerprint ID that stays consistent even if the file path changes.
+    // We use title, artist, and file length as a heuristic.
+    val fingerprintId: String
+        get() = "${title}_${artist}_${file.length()}".hashCode().toString()
+
     companion object {
         fun fromFile(file: File): MusicFile {
             val fileName = file.nameWithoutExtension

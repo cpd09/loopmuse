@@ -300,11 +300,20 @@ class PlaybackQueueManager(context: Context) {
         if (queue.isEmpty()) return null
 
         if (state.isRandom) {
-            val candidates = if (state.isSmart) {
+            if (state.isSmart) {
                 val histSet = state.history.toSet()
-                queue.filter { !histSet.contains(it) }
-            } else queue
-            nextId = if (candidates.isNotEmpty()) candidates.random() else queue.random()
+                val candidates = queue.filter { !histSet.contains(it) }
+                if (candidates.isNotEmpty()) {
+                    nextId = candidates.random()
+                } else {
+                    // Smart Random: All songs played. Auto-reset history and loop.
+                    playlists[currentPlaylistId] = state.copy(history = emptyList(), historyIndex = -1)
+                    saveState()
+                    nextId = queue.random()
+                }
+            } else {
+                nextId = queue.random()
+            }
         } else {
             if (state.isSmart) {
                 val histSet = state.history.toSet()
@@ -314,7 +323,16 @@ class PlaybackQueueManager(context: Context) {
                         break
                     }
                 }
-                nextId = nextId ?: queue.firstOrNull { !histSet.contains(it) }
+                if (nextId == null) {
+                    nextId = queue.firstOrNull { !histSet.contains(it) }
+                }
+                
+                if (nextId == null) {
+                    // Smart Sequential: All songs played. Auto-reset history and loop.
+                    playlists[currentPlaylistId] = state.copy(history = emptyList(), historyIndex = -1)
+                    saveState()
+                    nextId = queue.firstOrNull()
+                }
             } else {
                 nextId = queue[(state.currentIndex + 1) % queue.size]
             }

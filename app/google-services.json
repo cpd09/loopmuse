@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "885512632256",
+    "project_id": "loopmuse-9991f",
+    "storage_bucket": "loopmuse-9991f.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:885512632256:android:8234bcae3bdec58b3c3a25",
+        "android_client_info": {
+          "package_name": "com.example.loopmuse"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBvLpeXZe3vt1i7ZzxuT4RxgzAYnC_MU1Y"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

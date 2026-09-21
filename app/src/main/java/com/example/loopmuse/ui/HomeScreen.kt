@@ -17,7 +17,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.TextSelectionColors
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.automirrored.filled.ManageSearch
@@ -45,6 +47,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.loopmuse.community.ui.CommunityLoungeScreen
 import com.example.loopmuse.data.MusicFile
 import com.example.loopmuse.service.*
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
@@ -86,6 +89,7 @@ fun HomeScreen() {
     var showLocalRefreshDialog by remember { mutableStateOf(value = false) }
     var showSearchDialog by remember { mutableStateOf(value = false) }
     var showEditPlaylistDialog by remember { mutableStateOf(value = false) }
+    var showLoungeScreen by remember { mutableStateOf(value = false) }
     
     var searchType by remember { mutableStateOf("파일명") } 
     var editPlaylistName by remember { mutableStateOf("") }
@@ -104,6 +108,7 @@ fun HomeScreen() {
     val isSelectionPlayback by musicServiceConnection.isSelectionPlayback.collectAsStateWithLifecycle()
     val isTasteMode by musicServiceConnection.isTasteMode.collectAsStateWithLifecycle()
     val selectedIds by musicServiceConnection.selectedIds.collectAsStateWithLifecycle()
+    val likedFingerprints by musicServiceConnection.likedFingerprints.collectAsStateWithLifecycle()
     
     val currentPosition by musicServiceConnection.currentPosition.collectAsStateWithLifecycle()
     val duration by musicServiceConnection.duration.collectAsStateWithLifecycle()
@@ -122,7 +127,11 @@ fun HomeScreen() {
     LaunchedEffect(Unit) { musicServiceConnection.bindService() }
     DisposableEffect(Unit) { onDispose { musicServiceConnection.unbindService() } }
     
-    if (showSelectionScreen) {
+    if (showLoungeScreen) {
+        CommunityLoungeScreen(
+            onBackPressed = { showLoungeScreen = false }
+        )
+    } else if (showSelectionScreen) {
         MusicSelectionScreen(
             musicScanner = musicScanner,
             initialSelectedItems = musicServiceConnection.getSelectedItems(),
@@ -140,9 +149,19 @@ fun HomeScreen() {
                     Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("🎵 LoopMuse", fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                            Column(horizontalAlignment = Alignment.End) {
-                                Text("v1.9.0", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text("2026.09.19", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(
+                                    onClick = { showLoungeScreen = true },
+                                    modifier = Modifier.height(28.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("Lounge", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text("v1.9.0", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text("2026.09.19", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
                             }
                         }
                         Spacer(modifier = Modifier.height(8.dp))
@@ -184,7 +203,17 @@ fun HomeScreen() {
                             OptionIconButton(Icons.Default.Headset, playlistState?.isSmart ?: false, togglesEnabled) { musicServiceConnection.toggleSmart() }
                             OptionIconButton(Icons.Default.RepeatOne, playlistState?.isSingleRepeat ?: false) { musicServiceConnection.toggleSingleRepeat() }
                         }
-                        IconButton(onClick = { }, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.Settings, contentDescription = "설정", modifier = Modifier.size(20.dp)) }
+                        
+                        var showSettingsMenu by remember { mutableStateOf(false) }
+                        Box {
+                            IconButton(onClick = { showSettingsMenu = true }, modifier = Modifier.size(32.dp)) { 
+                                Icon(Icons.Default.Settings, contentDescription = "설정", modifier = Modifier.size(20.dp)) 
+                            }
+                            DropdownMenu(expanded = showSettingsMenu, onDismissRequest = { showSettingsMenu = false }) {
+                                DropdownMenuItem(text = { Text("데이터 백업") }, onClick = { showSettingsMenu = false /* Phase 2: Implement Backup */ })
+                                DropdownMenuItem(text = { Text("데이터 복원") }, onClick = { showSettingsMenu = false /* Phase 2: Implement Restore */ })
+                            }
+                        }
                     }
                     Spacer(modifier = Modifier.height(12.dp))
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -227,10 +256,13 @@ fun HomeScreen() {
                     Box(modifier = Modifier.weight(1f)) {
                         PlaylistView(
                             songs = allSongsInQueue, currentTrack = currentTrack, playlistState = playlistState,
-                            playedSongIds = playedSongIds, selectedIds = selectedIds,
+                            playedSongIds = playedSongIds, selectedIds = selectedIds, likedFingerprints = likedFingerprints,
                             onSongClick = { song ->
                                 if (isSelectionMode) musicServiceConnection.toggleSelection(song.id)
                                 else musicServiceConnection.playTrackById(song.id)
+                            },
+                            onLikeClick = { fingerprintId ->
+                                musicServiceConnection.toggleLike(fingerprintId)
                             }
                         )
                     }
@@ -284,7 +316,7 @@ fun HomeScreen() {
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             var categoryExpanded by remember { mutableStateOf(false) }
-                            Box(modifier = Modifier.weight(0.7f)) { // Increased width weight
+                            Box(modifier = Modifier.weight(0.35f)) { // Restored compact width weight
                                 OutlinedButton(
                                     onClick = { categoryExpanded = true },
                                     modifier = Modifier.fillMaxWidth().height(42.dp),
@@ -304,30 +336,40 @@ fun HomeScreen() {
                                 }
                             }
 
-                            TextField(
+                            // Custom Text Field to prevent clipping
+                            BasicTextField(
                                 value = localSearchQuery,
                                 onValueChange = { localSearchQuery = it },
-                                placeholder = { Text("입력", fontSize = 12.sp) }, // Simpler placeholder
-                                modifier = Modifier.weight(0.3f).height(42.dp), // Reduced weight
+                                modifier = Modifier.weight(0.65f).height(42.dp),
                                 singleLine = true,
-                                textStyle = LocalTextStyle.current.copy(fontSize = 13.sp),
-                                colors = TextFieldDefaults.colors(
-                                    focusedContainerColor = Color.Transparent,
-                                    unfocusedContainerColor = Color.Transparent
-                                )
+                                textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface),
+                                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                                decorationBox = { innerTextField ->
+                                    Box(
+                                        modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
+                                        contentAlignment = Alignment.CenterStart
+                                    ) {
+                                        if (localSearchQuery.isEmpty()) {
+                                            Text("검색어 입력", fontSize = 12.sp, color = Color.Gray)
+                                        }
+                                        innerTextField()
+                                        // Bottom Line (Underline)
+                                        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color.Gray.copy(alpha = 0.5f)).align(Alignment.BottomCenter))
+                                    }
+                                }
                             )
                         }
 
                         Spacer(modifier = Modifier.height(20.dp))
 
-                        // Bottom Actions (Slimmed down)
+                        // Bottom Actions (40:60 ratio)
                         Row(
                             modifier = Modifier.fillMaxWidth(), 
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             OutlinedButton(
                                 onClick = { showSearchDialog = false },
-                                modifier = Modifier.weight(1f).height(38.dp), // Slimmer height
+                                modifier = Modifier.weight(0.4f).height(38.dp), 
                                 shape = RoundedCornerShape(12.dp),
                                 contentPadding = PaddingValues(0.dp)
                             ) {
@@ -339,7 +381,7 @@ fun HomeScreen() {
                                     showSearchDialog = false 
                                 },
                                 enabled = localSearchQuery.isNotBlank(),
-                                modifier = Modifier.weight(1f).height(38.dp), // Slimmer height and equal weight
+                                modifier = Modifier.weight(0.6f).height(38.dp), 
                                 shape = RoundedCornerShape(12.dp),
                                 contentPadding = PaddingValues(0.dp)
                             ) {
@@ -399,7 +441,6 @@ fun HomeScreen() {
                                     Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(16.dp))
                                 }
                                 DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                                    DropdownMenuItem(text = { Text("(새로 저장)") }, onClick = { selectedPlaylistIdForEdit = null; editPlaylistName = ""; expanded = false })
                                     userPlaylists.forEach { p ->
                                         DropdownMenuItem(text = { Text(p.name) }, onClick = { 
                                             selectedPlaylistIdForEdit = p.id
@@ -414,15 +455,29 @@ fun HomeScreen() {
                         
                         Spacer(modifier = Modifier.height(8.dp))
                         
-                        // Name Input & Save/Update Button Row
+                        // Name Input & Save/Update Button Row (70:30 ratio)
                         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            TextField(
-                                value = editPlaylistName, 
-                                onValueChange = { editPlaylistName = it }, 
-                                placeholder = { Text("리스트 이름", fontSize = 12.sp) }, 
-                                modifier = Modifier.weight(1f).height(42.dp), 
-                                singleLine = true, 
-                                textStyle = LocalTextStyle.current.copy(fontSize = 13.sp)
+                            // Custom Text Field to prevent clipping
+                            BasicTextField(
+                                value = editPlaylistName,
+                                onValueChange = { editPlaylistName = it },
+                                modifier = Modifier.weight(0.7f).height(42.dp),
+                                singleLine = true,
+                                textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface),
+                                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                                decorationBox = { innerTextField ->
+                                    Box(
+                                        modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp),
+                                        contentAlignment = Alignment.CenterStart
+                                    ) {
+                                        if (editPlaylistName.isEmpty()) {
+                                            Text("리스트 이름", fontSize = 12.sp, color = Color.Gray)
+                                        }
+                                        innerTextField()
+                                        // Bottom Line (Underline)
+                                        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color.Gray.copy(alpha = 0.5f)).align(Alignment.BottomCenter))
+                                    }
+                                }
                             )
                             Button(
                                 onClick = { 
@@ -432,8 +487,8 @@ fun HomeScreen() {
                                     showEditPlaylistDialog = false; musicServiceConnection.clearSelection() 
                                 },
                                 enabled = editPlaylistName.isNotBlank() && editSelectedIds.size >= 2,
-                                modifier = Modifier.height(42.dp),
-                                contentPadding = PaddingValues(horizontal = 12.dp),
+                                modifier = Modifier.weight(0.3f).height(42.dp),
+                                contentPadding = PaddingValues(0.dp),
                                 shape = RoundedCornerShape(8.dp)
                             ) {
                                 Text(if (selectedPlaylistIdForEdit != null) "업데이트" else "저장", fontSize = 11.sp, fontWeight = FontWeight.Bold)
@@ -695,8 +750,8 @@ fun NowPlayingCardExpanded(
 @Composable
 fun PlaylistView(
     songs: List<MusicFile>, currentTrack: MusicFile?, playlistState: PlaylistState?,
-    playedSongIds: Set<String>, selectedIds: Set<String>,
-    onSongClick: (MusicFile) -> Unit
+    playedSongIds: Set<String>, selectedIds: Set<String>, likedFingerprints: Set<String>,
+    onSongClick: (MusicFile) -> Unit, onLikeClick: (String) -> Unit
 ) {
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
@@ -744,6 +799,7 @@ fun PlaylistView(
                 val isCurrent = song.id == currentTrack?.id
                 val isPlayed = playedSongIds.contains(song.id)
                 val isSelected = selectedIds.contains(song.id)
+                val isLiked = likedFingerprints.contains(song.fingerprintId)
                 val isSingleRepeat = playlistState?.isSingleRepeat ?: false
                 
                 val alpha = if (isPlayed && !isCurrent) 0.4f else 1f
@@ -802,8 +858,15 @@ fun PlaylistView(
                     shape = MaterialTheme.shapes.medium
                 ) {
                     Row(modifier = Modifier.padding(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.MusicNote, contentDescription = null, tint = color.copy(alpha = alpha), modifier = Modifier.size(20.dp))
-                        Spacer(modifier = Modifier.width(12.dp))
+                        IconButton(onClick = { onLikeClick(song.fingerprintId) }, modifier = Modifier.size(24.dp)) {
+                            Icon(
+                                imageVector = Icons.Default.MusicNote, 
+                                contentDescription = "좋아요", 
+                                tint = if (isLiked) Color.Red else Color(0xFF8BC34A).copy(alpha = alpha), 
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
                         Column {
                             Text(text = song.title, color = color.copy(alpha = alpha), fontSize = 14.sp, fontWeight = weight, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(text = song.artist, fontSize = 11.sp, color = color.copy(alpha = alpha * 0.7f), fontWeight = weight)

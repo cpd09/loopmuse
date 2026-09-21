@@ -48,6 +48,9 @@ class MusicServiceConnection(private val context: Context) {
     private val _selectedIds = MutableStateFlow<Set<String>>(emptySet())
     val selectedIds: StateFlow<Set<String>> = _selectedIds
 
+    private val _likedFingerprints = MutableStateFlow<Set<String>>(emptySet())
+    val likedFingerprints: StateFlow<Set<String>> = _likedFingerprints
+
     private val _playedSongIds = MutableStateFlow<Set<String>>(emptySet())
     val playedSongIds: StateFlow<Set<String>> = _playedSongIds
 
@@ -82,6 +85,7 @@ class MusicServiceConnection(private val context: Context) {
                     launch { s.isTasteMode.collect { _isTasteMode.value = it } }
                     launch { s.selectedIds.collect { _selectedIds.value = it } }
                     launch { s.playedSongIds.collect { _playedSongIds.value = it } }
+                    launch { s.likedFingerprints.collect { _likedFingerprints.value = it } }
                     launch { s.currentPosition.collect { _currentPosition.value = it } }
                     launch { s.duration.collect { _duration.value = it } }
                     launch { s.queueEnded.collect { _queueEnded.emit(Unit) } }
@@ -133,6 +137,7 @@ class MusicServiceConnection(private val context: Context) {
     fun searchAndCreatePlaylist(query: String, type: String) { musicService?.searchAndCreatePlaylist(query, type) }
     fun toggleSelectionMode() { musicService?.toggleSelectionMode() }
     fun toggleSelection(id: String) { musicService?.toggleSelection(id) }
+    fun toggleLike(fingerprintId: String) { musicService?.toggleLike(fingerprintId) }
     fun selectAll() { musicService?.selectAll() }
     fun clearSelection() { musicService?.clearSelection() }
     fun playTrackById(id: String) { musicService?.playTrackById(id) }

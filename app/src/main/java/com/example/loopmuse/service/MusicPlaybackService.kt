@@ -79,6 +79,9 @@ class MusicPlaybackService : Service() {
 
     private val _playedSongIds = MutableStateFlow<Set<String>>(emptySet())
     val playedSongIds: StateFlow<Set<String>> = _playedSongIds
+
+    private val _likedFingerprints = MutableStateFlow<Set<String>>(emptySet())
+    val likedFingerprints: StateFlow<Set<String>> = _likedFingerprints
     
     private val _allSongsInQueue = MutableStateFlow<List<MusicFile>>(emptyList())
     val allSongsInQueue: StateFlow<List<MusicFile>> = _allSongsInQueue
@@ -92,6 +95,10 @@ class MusicPlaybackService : Service() {
     private val _songCounts = MutableStateFlow("0곡")
     val songCounts: StateFlow<String> = _songCounts
     
+    
+    // Room DB
+    private lateinit var appDatabase: com.example.loopmuse.data.db.AppDatabase
+    
     inner class LocalBinder : Binder() {
         fun getService(): MusicPlaybackService = this@MusicPlaybackService
     }
@@ -101,12 +108,20 @@ class MusicPlaybackService : Service() {
         queueManager = PlaybackQueueManager(this)
         musicScanner = MusicScanner(this)
         notificationManager = NotificationManagerCompat.from(this)
+        appDatabase = com.example.loopmuse.data.db.AppDatabase.getDatabase(this)
         
         loadSelectedItems()
         syncWithQueueManager()
         createNotificationChannel()
         initializeMediaSession()
         startPositionUpdates()
+
+        // Sync liked songs from DB
+        serviceScope.launch {
+            appDatabase.songMetaDao().getLikedSongs().collect { likedEntities ->
+                _likedFingerprints.value = likedEntities.map { it.fingerprintId }.toSet()
+            }
+        }
 
         if (selectedItems.isNotEmpty()) {
             serviceScope.launch { updateSongCounts() }
@@ -324,6 +339,27 @@ class MusicPlaybackService : Service() {
         }
         
         syncWithQueueManager()
+    }
+
+    fun toggleLike(fingerprintId: String) {
+        serviceScope.launch {
+            val isCurrentlyLiked = _likedFingerprints.value.contains(fingerprintId)
+            val currentMeta = appDatabase.songMetaDao().getMetadataById(fingerprintId)
+            
+            if (currentMeta != null) {
+                appDatabase.songMetaDao().updateLikeStatus(fingerprintId, !isCurrentlyLiked)
+            } else {
+                val file = cachedAllSongs.find { it.fingerprintId == fingerprintId }
+                appDatabase.songMetaDao().insertOrUpdate(
+                    com.example.loopmuse.data.db.SongMetaEntity(
+                        fingerprintId = fingerprintId,
+                        title = file?.title ?: "Unknown",
+                        artist = file?.artist ?: "Unknown",
+                        isLiked = !isCurrentlyLiked
+                    )
+                )
+            }
+        }
     }
 
     fun startSelectionPlayback() {
