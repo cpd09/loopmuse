@@ -390,7 +390,7 @@ fun HomeScreen() {
                                     Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(16.dp))
                                 }
                                 DropdownMenu(expanded = categoryExpanded, onDismissRequest = { categoryExpanded = false }) {
-                                    listOf("파일명", "가수", "앨범").forEach { type ->
+                                    listOf("파일명", "가수", "앨범", "느낌", "상황", "좋아요").forEach { type ->
                                         DropdownMenuItem(text = { Text(type) }, onClick = { 
                                             searchType = type
                                             categoryExpanded = false 

@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlin.time.Duration.Companion.seconds
 
 class MusicPlaybackService : Service() {
@@ -286,15 +287,25 @@ class MusicPlaybackService : Service() {
     fun updateCustomPlaylist(id: String, name: String, ids: List<String>) { queueManager.updateCustomPlaylist(id, name, ids); syncWithQueueManager() }
     fun deletePlaylist(id: String) { queueManager.deletePlaylist(id); syncWithQueueManager() }
     fun searchAndCreatePlaylist(query: String, type: String) {
-        val results = cachedAllSongs.filter { 
-            when (type) {
-                "가수" -> it.artist.contains(query, ignoreCase = true)
-                "앨범" -> it.album.contains(query, ignoreCase = true)
-                else -> it.file.name.contains(query, ignoreCase = true) || it.title.contains(query, ignoreCase = true)
-            }
-        }.map { it.id }
-        queueManager.setTemporaryPlaylist(query, results)
-        syncWithQueueManager()
+        serviceScope.launch {
+            val dbMetas = appDatabase.songMetaDao().getAllMetadata().first()
+            val metaMap = dbMetas.associateBy { it.fingerprintId }
+
+            val results = cachedAllSongs.filter { song ->
+                val meta = metaMap[song.fingerprintId]
+                when (type) {
+                    "가수" -> song.artist.contains(query, ignoreCase = true)
+                    "앨범" -> song.album.contains(query, ignoreCase = true)
+                    "느낌" -> meta?.vibeTags?.contains(query, ignoreCase = true) == true
+                    "상황" -> meta?.occasionTags?.contains(query, ignoreCase = true) == true
+                    "좋아요" -> meta?.isLiked == true
+                    else -> song.file.name.contains(query, ignoreCase = true) || song.title.contains(query, ignoreCase = true)
+                }
+            }.map { it.id }
+            
+            queueManager.setTemporaryPlaylist(if (type == "좋아요") "좋아요 한 곡" else query, results)
+            syncWithQueueManager()
+        }
     }
 
     fun toggleSelectionMode() {
