@@ -11,5 +11,6 @@ data class SongMetaEntity(
     val artist: String,
     val isLiked: Boolean = false,
     val vibeTags: String = "", // comma-separated for now
-    val occasionTags: String = "" // comma-separated for now
+    val occasionTags: String = "", // comma-separated for now
+    val lastUpdated: Long = System.currentTimeMillis() // Timestamp for Merge-Restore logic
 )

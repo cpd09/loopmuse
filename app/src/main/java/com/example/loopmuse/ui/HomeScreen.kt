@@ -3,6 +3,8 @@ package com.example.loopmuse.ui
 import android.Manifest
 import android.app.Activity
 import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -91,6 +93,26 @@ fun HomeScreen() {
     var showEditPlaylistDialog by remember { mutableStateOf(value = false) }
     var showLoungeScreen by remember { mutableStateOf(value = false) }
     
+    var showBackupResult by remember { mutableStateOf<String?>(null) }
+    
+    val backupLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        uri?.let {
+            coroutineScope.launch {
+                val success = musicServiceConnection.createBackup(it)
+                showBackupResult = if (success) "백업 성공: loopmuse_backup.json" else "백업 실패"
+            }
+        }
+    }
+    
+    val restoreLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let {
+            coroutineScope.launch {
+                val success = musicServiceConnection.restoreDatabase(it)
+                showBackupResult = if (success) "데이터 복원(병합) 성공!" else "복원 실패"
+            }
+        }
+    }
+    
     var searchType by remember { mutableStateOf("파일명") } 
     var editPlaylistName by remember { mutableStateOf("") }
     var editSelectedIds by remember { mutableStateOf(setOf<String>()) }
@@ -115,6 +137,7 @@ fun HomeScreen() {
     val songCounts by musicServiceConnection.songCounts.collectAsStateWithLifecycle()
 
     var showQueueEndedDialog by remember { mutableStateOf(value = false) }
+    var songForTagEdit by remember { mutableStateOf<MusicFile?>(null) }
 
     LaunchedEffect(isServiceConnected) {
         if (isServiceConnected) {
@@ -205,14 +228,41 @@ fun HomeScreen() {
                         }
                         
                         var showSettingsMenu by remember { mutableStateOf(false) }
+                        
                         Box {
                             IconButton(onClick = { showSettingsMenu = true }, modifier = Modifier.size(32.dp)) { 
                                 Icon(Icons.Default.Settings, contentDescription = "설정", modifier = Modifier.size(20.dp)) 
                             }
                             DropdownMenu(expanded = showSettingsMenu, onDismissRequest = { showSettingsMenu = false }) {
-                                DropdownMenuItem(text = { Text("데이터 백업") }, onClick = { showSettingsMenu = false /* Phase 2: Implement Backup */ })
-                                DropdownMenuItem(text = { Text("데이터 복원") }, onClick = { showSettingsMenu = false /* Phase 2: Implement Restore */ })
+                                DropdownMenuItem(
+                                    text = { Text("데이터 백업 (폴더 선택)") }, 
+                                    onClick = { 
+                                        showSettingsMenu = false 
+                                        backupLauncher.launch(null)
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("데이터 복원 (파일 선택)") }, 
+                                    onClick = { 
+                                        showSettingsMenu = false 
+                                        restoreLauncher.launch(arrayOf("application/json", "*/*"))
+                                    }
+                                )
                             }
+                        }
+                        
+                        // Simple Snackbar alternative for results
+                        showBackupResult?.let { msg ->
+                            LaunchedEffect(msg) {
+                                delay(3000)
+                                showBackupResult = null
+                            }
+                            AlertDialog(
+                                onDismissRequest = { showBackupResult = null },
+                                title = { Text("알림") },
+                                text = { Text(msg) },
+                                confirmButton = { TextButton(onClick = { showBackupResult = null }) { Text("확인") } }
+                            )
                         }
                     }
                     Spacer(modifier = Modifier.height(12.dp))
@@ -263,7 +313,11 @@ fun HomeScreen() {
                             },
                             onLikeClick = { fingerprintId ->
                                 musicServiceConnection.toggleLike(fingerprintId)
-                            }
+                            },
+                            onEditTagsClick = { song ->
+                                songForTagEdit = song
+                            },
+                            isSelectionMode = isSelectionMode
                         )
                     }
                     Spacer(modifier = Modifier.height(4.dp))
@@ -272,6 +326,15 @@ fun HomeScreen() {
                 }
             }
         }
+    }
+
+    // --- Dialogs ---
+    songForTagEdit?.let { song ->
+        TagEditDialog(
+            song = song,
+            connection = musicServiceConnection,
+            onDismiss = { songForTagEdit = null }
+        )
     }
 
     // --- Phone-style '곡 상세 검색' Center ---
@@ -703,6 +766,113 @@ fun SortCombo(state: PlaylistState?, connection: MusicServiceConnection) {
     }
 }
 
+@Composable
+fun TagEditDialog(
+    song: MusicFile,
+    connection: MusicServiceConnection,
+    onDismiss: () -> Unit
+) {
+    var vibeTags by remember { mutableStateOf(setOf<String>()) }
+    var occasionTags by remember { mutableStateOf(setOf<String>()) }
+    var isLoading by remember { mutableStateOf(true) }
+    
+    val defaultVibes = listOf("신남", "차분", "분위기", "발랄", "우울", "몽환", "강렬")
+    val defaultOccasions = listOf("비오는날", "여행", "드라이브", "일할때", "운동", "휴식", "출퇴근")
+    
+    var newVibeInput by remember { mutableStateOf("") }
+    var newOccasionInput by remember { mutableStateOf("") }
+    var customVibes by remember { mutableStateOf(listOf<String>()) }
+    var customOccasions by remember { mutableStateOf(listOf<String>()) }
+
+    LaunchedEffect(song.fingerprintId) {
+        val meta = connection.getSongMeta(song.fingerprintId)
+        if (meta != null) {
+            vibeTags = meta.vibeTags.split(",").filter { it.isNotBlank() }.toSet()
+            occasionTags = meta.occasionTags.split(",").filter { it.isNotBlank() }.toSet()
+            // Add custom tags not in default to custom lists
+            customVibes = vibeTags.filter { !defaultVibes.contains(it) }
+            customOccasions = occasionTags.filter { !defaultOccasions.contains(it) }
+        }
+        isLoading = false
+    }
+
+    if (!isLoading) {
+        Dialog(onDismissRequest = onDismiss) {
+            Surface(
+                modifier = Modifier.fillMaxWidth().wrapContentHeight(),
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 8.dp
+            ) {
+                Column(modifier = Modifier.padding(20.dp)) {
+                    Text("태그 편집", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    Text(song.title, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Color.Gray)
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Text("어떤 느낌인가요? (Vibe)", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    @OptIn(ExperimentalLayoutApi::class)
+                    FlowRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        (defaultVibes + customVibes).forEach { tag ->
+                            val isSelected = vibeTags.contains(tag)
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = { vibeTags = if (isSelected) vibeTags - tag else vibeTags + tag },
+                                label = { Text(tag, fontSize = 12.sp) }
+                            )
+                        }
+                    }
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        BasicTextField(
+                            value = newVibeInput, onValueChange = { newVibeInput = it },
+                            modifier = Modifier.weight(1f).height(32.dp).border(1.dp, Color.LightGray, RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 6.dp),
+                            singleLine = true, textStyle = LocalTextStyle.current.copy(fontSize = 12.sp),
+                            decorationBox = { inner -> if (newVibeInput.isEmpty()) Text("+ 직접 입력", fontSize = 12.sp, color = Color.Gray) else inner() }
+                        )
+                        IconButton(onClick = { if (newVibeInput.isNotBlank()) { customVibes = customVibes + newVibeInput; vibeTags = vibeTags + newVibeInput; newVibeInput = "" } }) {
+                            Icon(Icons.Default.AddCircle, contentDescription = "추가", tint = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Text("어떨 때 좋나요? (Occasion)", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    @OptIn(ExperimentalLayoutApi::class)
+                    FlowRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        (defaultOccasions + customOccasions).forEach { tag ->
+                            val isSelected = occasionTags.contains(tag)
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = { occasionTags = if (isSelected) occasionTags - tag else occasionTags + tag },
+                                label = { Text(tag, fontSize = 12.sp) }
+                            )
+                        }
+                    }
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        BasicTextField(
+                            value = newOccasionInput, onValueChange = { newOccasionInput = it },
+                            modifier = Modifier.weight(1f).height(32.dp).border(1.dp, Color.LightGray, RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 6.dp),
+                            singleLine = true, textStyle = LocalTextStyle.current.copy(fontSize = 12.sp),
+                            decorationBox = { inner -> if (newOccasionInput.isEmpty()) Text("+ 직접 입력", fontSize = 12.sp, color = Color.Gray) else inner() }
+                        )
+                        IconButton(onClick = { if (newOccasionInput.isNotBlank()) { customOccasions = customOccasions + newOccasionInput; occasionTags = occasionTags + newOccasionInput; newOccasionInput = "" } }) {
+                            Icon(Icons.Default.AddCircle, contentDescription = "추가", tint = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = onDismiss) { Text("취소") }
+                        Button(onClick = {
+                            connection.updateSongTags(song.fingerprintId, vibeTags.joinToString(","), occasionTags.joinToString(","))
+                            onDismiss()
+                        }) { Text("저장") }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun NowPlayingCardExpanded(
@@ -751,7 +921,8 @@ fun NowPlayingCardExpanded(
 fun PlaylistView(
     songs: List<MusicFile>, currentTrack: MusicFile?, playlistState: PlaylistState?,
     playedSongIds: Set<String>, selectedIds: Set<String>, likedFingerprints: Set<String>,
-    onSongClick: (MusicFile) -> Unit, onLikeClick: (String) -> Unit
+    onSongClick: (MusicFile) -> Unit, onLikeClick: (String) -> Unit, onEditTagsClick: (MusicFile) -> Unit,
+    isSelectionMode: Boolean
 ) {
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
@@ -867,9 +1038,14 @@ fun PlaylistView(
                             )
                         }
                         Spacer(modifier = Modifier.width(8.dp))
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(text = song.title, color = color.copy(alpha = alpha), fontSize = 14.sp, fontWeight = weight, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(text = song.artist, fontSize = 11.sp, color = color.copy(alpha = alpha * 0.7f), fontWeight = weight)
+                        }
+                        if (!isSelectionMode) {
+                            IconButton(onClick = { onEditTagsClick(song) }, modifier = Modifier.size(24.dp)) {
+                                Icon(Icons.Default.Edit, contentDescription = "태그 편집", tint = Color.Gray.copy(alpha = 0.6f), modifier = Modifier.size(16.dp))
+                            }
                         }
                     }
                 }

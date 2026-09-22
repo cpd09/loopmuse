@@ -96,8 +96,9 @@ class MusicPlaybackService : Service() {
     val songCounts: StateFlow<String> = _songCounts
     
     
-    // Room DB
+    // Room DB & Backup
     private lateinit var appDatabase: com.example.loopmuse.data.db.AppDatabase
+    lateinit var backupManager: BackupManager
     
     inner class LocalBinder : Binder() {
         fun getService(): MusicPlaybackService = this@MusicPlaybackService
@@ -109,6 +110,7 @@ class MusicPlaybackService : Service() {
         musicScanner = MusicScanner(this)
         notificationManager = NotificationManagerCompat.from(this)
         appDatabase = com.example.loopmuse.data.db.AppDatabase.getDatabase(this)
+        backupManager = BackupManager(this, appDatabase.songMetaDao())
         
         loadSelectedItems()
         syncWithQueueManager()
@@ -356,6 +358,32 @@ class MusicPlaybackService : Service() {
                         title = file?.title ?: "Unknown",
                         artist = file?.artist ?: "Unknown",
                         isLiked = !isCurrentlyLiked
+                    )
+                )
+            }
+        }
+    }
+
+    suspend fun getSongMeta(fingerprintId: String): com.example.loopmuse.data.db.SongMetaEntity? {
+        return appDatabase.songMetaDao().getMetadataById(fingerprintId)
+    }
+
+    fun updateSongTags(fingerprintId: String, vibeTags: String, occasionTags: String) {
+        serviceScope.launch {
+            val currentMeta = appDatabase.songMetaDao().getMetadataById(fingerprintId)
+            if (currentMeta != null) {
+                appDatabase.songMetaDao().insertOrUpdate(
+                    currentMeta.copy(vibeTags = vibeTags, occasionTags = occasionTags, lastUpdated = System.currentTimeMillis())
+                )
+            } else {
+                val file = cachedAllSongs.find { it.fingerprintId == fingerprintId }
+                appDatabase.songMetaDao().insertOrUpdate(
+                    com.example.loopmuse.data.db.SongMetaEntity(
+                        fingerprintId = fingerprintId,
+                        title = file?.title ?: "Unknown",
+                        artist = file?.artist ?: "Unknown",
+                        vibeTags = vibeTags,
+                        occasionTags = occasionTags
                     )
                 )
             }

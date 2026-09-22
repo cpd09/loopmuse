@@ -138,7 +138,20 @@ class MusicServiceConnection(private val context: Context) {
     fun toggleSelectionMode() { musicService?.toggleSelectionMode() }
     fun toggleSelection(id: String) { musicService?.toggleSelection(id) }
     fun toggleLike(fingerprintId: String) { musicService?.toggleLike(fingerprintId) }
+    
+    // --- Tags ---
+    suspend fun getSongMeta(fingerprintId: String): com.example.loopmuse.data.db.SongMetaEntity? {
+        return musicService?.getSongMeta(fingerprintId)
+    }
+    fun updateSongTags(fingerprintId: String, vibeTags: String, occasionTags: String) {
+        musicService?.updateSongTags(fingerprintId, vibeTags, occasionTags)
+    }
+
     fun selectAll() { musicService?.selectAll() }
     fun clearSelection() { musicService?.clearSelection() }
     fun playTrackById(id: String) { musicService?.playTrackById(id) }
+
+    // --- Backup & Restore ---
+    suspend fun createBackup(treeUri: android.net.Uri): Boolean = musicService?.backupManager?.createBackup(treeUri) ?: false
+    suspend fun restoreDatabase(fileUri: android.net.Uri): Boolean = musicService?.backupManager?.restoreDatabase(fileUri) ?: false
 }
