@@ -47,6 +47,7 @@ class AlarmScheduler(private val context: Context) {
         )
     }
 
+    @Suppress("unused")
     fun cancelAlarm(alarmId: Int) {
         val intent = Intent(context, AlarmReceiver::class.java)
         val pendingIntent = PendingIntent.getBroadcast(

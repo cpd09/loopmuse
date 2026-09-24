@@ -2,7 +2,11 @@ package com.example.loopmuse.ui
 
 import android.Manifest
 import android.app.Activity
+import android.content.pm.PackageManager
 import android.os.Build
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
@@ -28,6 +32,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.automirrored.filled.ManageSearch
+import androidx.compose.material.icons.automirrored.filled.VolumeDown
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -63,12 +68,30 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 @OptIn(ExperimentalPermissionsApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreen() {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+    
+    val (appVersion, appUpdateDate) = remember(context) {
+        try {
+            val packageInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.packageManager.getPackageInfo(context.packageName, PackageManager.PackageInfoFlags.of(0))
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageInfo(context.packageName, 0)
+            }
+            val version = packageInfo.versionName ?: "1.0.0"
+            val dateFormat = SimpleDateFormat("yyyy.MM.dd", Locale.getDefault())
+            val updateDate = dateFormat.format(Date(packageInfo.lastUpdateTime))
+            Pair("v$version", updateDate)
+        } catch (e: Exception) {
+            Pair("v1.0.0", "2026.09.25")
+        }
+    }
     
     // Engine to block annoying system popup menus
     val emptyTextToolbar = remember {
@@ -195,8 +218,8 @@ fun HomeScreen() {
                                 }
                                 
                                 Column(horizontalAlignment = Alignment.End) {
-                                    Text("v1.9.0", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Text("2026.09.19", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(appVersion, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(appUpdateDate, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                                 
                                 if (showAlarmDialog) {
@@ -293,7 +316,7 @@ fun HomeScreen() {
                         // Simple Snackbar alternative for results
                         showBackupResult?.let { msg ->
                             LaunchedEffect(msg) {
-                                delay(3000L)
+                                delay(3.seconds)
                                 showBackupResult = null
                             }
                             AlertDialog(
@@ -1239,7 +1262,7 @@ fun NowPlayingCardExpanded(
             }
             Spacer(modifier = Modifier.height(4.dp))
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Icon(Icons.Default.VolumeDown, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+                Icon(Icons.AutoMirrored.Filled.VolumeDown, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
                 Slider(value = currentVolume, onValueChange = { currentVolume = it; audioManager.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, it.roundToInt(), 0) }, valueRange = 0f..maxVolume, modifier = Modifier.weight(0.7f).height(32.dp), colors = SliderDefaults.colors(thumbColor = MaterialTheme.colorScheme.primary, activeTrackColor = MaterialTheme.colorScheme.primary, inactiveTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)))
                 Spacer(modifier = Modifier.width(4.dp))
                 IconButton(onClick = { connection.playPrevious() }) { Icon(Icons.Default.SkipPrevious, contentDescription = "이전곡", modifier = Modifier.size(30.dp)) }

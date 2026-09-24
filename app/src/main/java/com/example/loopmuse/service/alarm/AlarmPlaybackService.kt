@@ -14,7 +14,7 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.example.loopmuse.MainActivity
-import com.example.loopmuse.data.db.AppDatabase
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -36,7 +36,7 @@ class AlarmPlaybackService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
         createNotificationChannel()
     }
 
@@ -60,13 +60,13 @@ class AlarmPlaybackService : Service() {
         }
 
         serviceScope.launch {
-            playAlarm(songPath, fingerprintId, startPositionMs, targetVolume, useFadeIn)
+            playAlarm(songPath, startPositionMs, targetVolume, useFadeIn)
         }
 
         return START_STICKY
     }
 
-    private suspend fun playAlarm(songPath: String?, fingerprintId: String?, startPositionMs: Long, targetVolume: Float, useFadeIn: Boolean) {
+    private fun playAlarm(songPath: String?, startPositionMs: Long, targetVolume: Float, useFadeIn: Boolean) {
         // --- Volume Override Logic (Ignore Silent/Vibrate) ---
         originalVolume = audioManager.getStreamVolume(AudioManager.STREAM_ALARM)
         val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
@@ -132,7 +132,7 @@ class AlarmPlaybackService : Service() {
             serviceScope.launch {
                 for (v in 1..finalVolumeIdx) {
                     audioManager.setStreamVolume(AudioManager.STREAM_ALARM, v, 0)
-                    delay(3000) // Increase every 3 seconds for a gentle wake up
+                    delay(3.seconds) // Increase every 3 seconds for a gentle wake up
                 }
             }
         }
@@ -146,7 +146,12 @@ class AlarmPlaybackService : Service() {
         mediaPlayer = null
         // Restore user's original volume
         audioManager.setStreamVolume(AudioManager.STREAM_ALARM, originalVolume, 0)
-        stopForeground(true)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
+        }
         stopSelf()
     }
 

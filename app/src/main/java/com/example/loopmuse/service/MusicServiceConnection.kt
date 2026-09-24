@@ -124,6 +124,7 @@ class MusicServiceConnection(private val context: Context) {
     fun globalReset() { musicService?.globalReset() }
     fun toggleSort(criteria: SortCriteria) { musicService?.toggleSort(criteria) }
     fun seekTo(position: Long) { musicService?.seekTo(position) }
+    @Suppress("unused")
     fun getSortInfo(): Pair<SortCriteria, SortOrder> = musicService?.getSortInfo() ?: (SortCriteria.DATE to SortOrder.DESCENDING)
     
     fun toggleRandom() { musicService?.toggleRandom() }
@@ -134,7 +135,9 @@ class MusicServiceConnection(private val context: Context) {
     fun switchPlaylist(id: String) { musicService?.switchPlaylist(id) }
     fun addCustomPlaylist(name: String, ids: List<String>) { musicService?.addCustomPlaylist(name, ids) }
     fun updateCustomPlaylist(id: String, name: String, ids: List<String>) { musicService?.updateCustomPlaylist(id, name, ids) }
+    @Suppress("unused")
     fun deletePlaylist(id: String) { musicService?.deletePlaylist(id) }
+    @Suppress("unused")
     fun searchAndCreatePlaylist(query: String, type: String) { musicService?.searchAndCreatePlaylist(query, type) }
     fun searchWithFilters(query: String, category: String, isLikedOnly: Boolean, selectedVibes: Set<String>, selectedOccasions: Set<String>) {
         musicService?.searchWithFilters(query, category, isLikedOnly, selectedVibes, selectedOccasions)

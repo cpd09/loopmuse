@@ -1,3 +1,5 @@
+@file:Suppress("USELESS_ELVIS", "UNNECESSARY_SAFE_CALL", "SENSELESS_COMPARISON")
+
 package com.example.loopmuse.service
 
 import android.content.Context
@@ -530,7 +532,7 @@ class PlaybackQueueManager(context: Context) {
             } else {
                 playlists = mutableMapOf()
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             playlists = mutableMapOf()
         }
         currentPlaylistId = prefs.getString("current_id", "ALL") ?: "ALL"
