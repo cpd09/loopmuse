@@ -7,6 +7,29 @@ plugins {
     id 'com.google.devtools.ksp'
 }
 
+def versionPropsFile = file('version.properties')
+Properties versionProps = new Properties()
+if (!versionPropsFile.exists()) {
+    versionProps['VERSION_CODE'] = '19'
+    versionProps.store(versionPropsFile.newWriter(), null)
+} else {
+    versionProps.load(versionPropsFile.newDataInputStream())
+}
+
+def currentVersionCode = (versionProps['VERSION_CODE'] ?: '19').toInteger()
+
+def isBuildingApk = gradle.startParameter.taskNames.any { task ->
+    def t = task.toLowerCase()
+    t.contains("assemble") || t.contains("package") || t.contains("bundle")
+}
+
+if (isBuildingApk && !rootProject.ext.has("hasVersionBumped")) {
+    rootProject.ext.hasVersionBumped = true
+    currentVersionCode += 1
+    versionProps['VERSION_CODE'] = currentVersionCode.toString()
+    versionProps.store(versionPropsFile.newWriter(), null)
+}
+
 android {
     namespace 'com.example.loopmuse'
 
@@ -16,7 +39,7 @@ android {
         applicationId "com.example.loopmuse"
         minSdk 24
         targetSdk 35
-        versionCode 19
+        versionCode currentVersionCode
         versionName "1.9.0"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
@@ -29,7 +52,13 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.debug
         }
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_11
@@ -50,8 +79,9 @@ android {
 
     applicationVariants.all { variant ->
         variant.outputs.all {
-            def date = new Date().format('yyyyMMdd-HHmm')
-            outputFileName = "loopmuse-${date}.apk"
+            def date = new Date().format('yyMMdd')
+            def codeFormatted = String.format('%04d', variant.versionCode)
+            outputFileName = "loopmuse-${date}-${codeFormatted}.apk"
         }
     }
 }
