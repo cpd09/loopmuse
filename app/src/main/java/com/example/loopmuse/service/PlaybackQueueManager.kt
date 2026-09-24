@@ -26,21 +26,24 @@ data class PlaylistState(
     val name: String,
     val type: PlaylistType,
     val queue: List<String> = emptyList(),
+    val originalQueue: List<String> = emptyList(),
     val currentIndex: Int = -1,
     val history: List<String> = emptyList(),
     val historyIndex: Int = -1,
     val isRandom: Boolean = false,
     val isSmart: Boolean = true,
     val isSingleRepeat: Boolean = false,
+    val isLikedFilter: Boolean = false,
     val sortCriteria: SortCriteria = SortCriteria.DATE,
     val sortOrder: SortOrder = SortOrder.DESCENDING
 )
 
 class PlaybackQueueManager(context: Context) {
-    private val prefs: SharedPreferences = context.getSharedPreferences("playback_queue_v4", Context.MODE_PRIVATE)
+    private val prefs: SharedPreferences = context.getSharedPreferences("playback_queue_v5", Context.MODE_PRIVATE)
     private val gson = Gson()
 
     private var allSongs: List<MusicFile> = emptyList()
+    private var likedFingerprints: Set<String> = emptySet()
     
     // Playlists: id -> state
     private var playlists: MutableMap<String, PlaylistState> = mutableMapOf()
@@ -64,6 +67,15 @@ class PlaybackQueueManager(context: Context) {
         saveState()
     }
 
+    fun setLikedFingerprints(set: Set<String>) {
+        likedFingerprints = set
+        val current = playlists[currentPlaylistId]
+        if (current?.isLikedFilter == true) {
+            updatePlaylistQueue(currentPlaylistId)
+            saveState()
+        }
+    }
+
     private fun refreshAllQueues() {
         playlists.keys.forEach { id ->
             updatePlaylistQueue(id)
@@ -72,12 +84,19 @@ class PlaybackQueueManager(context: Context) {
 
     private fun updatePlaylistQueue(id: String) {
         val state = playlists[id] ?: return
-        val songsInLibrary = if (id == "ALL") allSongs else {
-            allSongs.filter { song -> state.queue.contains(song.id) }
+        val baseQueueIds = (if (!state.originalQueue.isNullOrEmpty()) state.originalQueue else state.queue) ?: emptyList()
+        var songsInLibrary = if (id == "ALL") allSongs else {
+            allSongs.filter { song -> baseQueueIds.contains(song.id) }
+        }
+        
+        if (state.isLikedFilter) {
+            songsInLibrary = songsInLibrary.filter { song ->
+                likedFingerprints.contains(song.fingerprintId)
+            }
         }
         
         val newQueue = if (state.isRandom) {
-            val existingIds = state.queue.filter { qId -> songsInLibrary.any { it.id == qId } }
+            val existingIds = (state.queue ?: emptyList()).filter { qId -> songsInLibrary.any { it.id == qId } }
             val newIds = songsInLibrary.map { it.id }.filter { nId -> !existingIds.contains(nId) }.shuffled()
             existingIds + newIds
         } else {
@@ -88,13 +107,13 @@ class PlaybackQueueManager(context: Context) {
         }
 
         var newIndex = if (state.currentIndex != -1) {
-            val currentId = state.queue.getOrNull(state.currentIndex)
+            val currentId = state.queue?.getOrNull(state.currentIndex)
             newQueue.indexOf(currentId).coerceAtLeast(-1)
         } else -1
 
         if (newIndex == -1 && newQueue.isNotEmpty()) newIndex = 0
 
-        val newHistory = state.history.filter { hId -> songsInLibrary.any { it.id == hId } }
+        val newHistory = (state.history ?: emptyList()).filter { hId -> songsInLibrary.any { it.id == hId } }
         val finalHistory = if (newIndex != -1 && newHistory.isEmpty() && newQueue.isNotEmpty()) {
             listOf(newQueue[newIndex])
         } else newHistory
@@ -102,12 +121,13 @@ class PlaybackQueueManager(context: Context) {
         val finalHistoryIndex = if (newIndex != -1 && state.historyIndex == -1 && newQueue.isNotEmpty()) {
             0
         } else if (state.historyIndex != -1) {
-            val currentHistId = state.history.getOrNull(state.historyIndex)
+            val currentHistId = state.history?.getOrNull(state.historyIndex)
             finalHistory.indexOf(currentHistId).coerceAtLeast(-1)
         } else -1
 
         playlists[id] = state.copy(
             queue = newQueue,
+            originalQueue = state.originalQueue ?: emptyList(),
             currentIndex = newIndex,
             history = finalHistory,
             historyIndex = finalHistoryIndex
@@ -129,12 +149,15 @@ class PlaybackQueueManager(context: Context) {
             val p = playlists[id]
             if (p != null) {
                 playlists[id] = p.copy(
+                    queue = p.queue ?: emptyList(),
+                    originalQueue = p.originalQueue ?: emptyList(),
                     currentIndex = -1,
                     history = emptyList(),
                     historyIndex = -1,
                     isRandom = false,
                     isSmart = true,
                     isSingleRepeat = false,
+                    isLikedFilter = false,
                     sortCriteria = SortCriteria.DATE,
                     sortOrder = SortOrder.DESCENDING
                 )
@@ -153,12 +176,15 @@ class PlaybackQueueManager(context: Context) {
         
         // 1. Reset standard options to default
         val resetState = p.copy(
+            queue = p.queue ?: emptyList(),
+            originalQueue = p.originalQueue ?: emptyList(),
             currentIndex = -1,
             history = emptyList(),
             historyIndex = -1,
             isRandom = false,
             isSmart = true,
             isSingleRepeat = false,
+            isLikedFilter = false,
             sortCriteria = SortCriteria.DATE,
             sortOrder = SortOrder.DESCENDING
         )
@@ -173,6 +199,8 @@ class PlaybackQueueManager(context: Context) {
         val updatedP = playlists[id]
         if (updatedP != null && updatedP.queue.isNotEmpty()) {
             playlists[id] = updatedP.copy(
+                queue = updatedP.queue,
+                originalQueue = updatedP.originalQueue ?: emptyList(),
                 currentIndex = 0,
                 history = listOf(updatedP.queue[0]),
                 historyIndex = 0
@@ -212,14 +240,14 @@ class PlaybackQueueManager(context: Context) {
 
     fun addCustomPlaylist(name: String, ids: List<String>) {
         val id = "USER_${System.currentTimeMillis()}"
-        playlists[id] = PlaylistState(id, name, PlaylistType.PERMANENT, queue = ids)
+        playlists[id] = PlaylistState(id, name, PlaylistType.PERMANENT, queue = ids, originalQueue = ids)
         updatePlaylistQueue(id)
         saveState()
     }
 
     fun updateCustomPlaylist(id: String, name: String, ids: List<String>) {
         val existing = playlists[id] ?: return
-        playlists[id] = existing.copy(name = name, queue = ids)
+        playlists[id] = existing.copy(name = name, queue = ids, originalQueue = ids)
         updatePlaylistQueue(id)
         saveState()
     }
@@ -234,28 +262,66 @@ class PlaybackQueueManager(context: Context) {
 
     fun setTemporaryPlaylist(name: String, ids: List<String>) {
         val id = "TEMP"
-        playlists[id] = PlaylistState(id, name, PlaylistType.TEMPORARY, queue = ids)
+        playlists[id] = PlaylistState(id, name, PlaylistType.TEMPORARY, queue = ids, originalQueue = ids)
         currentPlaylistId = id
         updatePlaylistQueue(id)
         saveState()
     }
 
+    fun toggleLikedFilter(): Boolean {
+        val p = playlists[currentPlaylistId] ?: return false
+        val newLikedFilter = !p.isLikedFilter
+        
+        if (newLikedFilter) {
+            val baseQueueIds = (if (!p.originalQueue.isNullOrEmpty()) p.originalQueue else p.queue) ?: emptyList()
+            val songsInPlaylist = if (currentPlaylistId == "ALL") allSongs else {
+                allSongs.filter { song -> baseQueueIds.contains(song.id) }
+            }
+            val likedCount = songsInPlaylist.count { likedFingerprints.contains(it.fingerprintId) }
+            if (likedCount == 0) {
+                return false
+            }
+        }
+        
+        val original = if (p.originalQueue.isNullOrEmpty() && currentPlaylistId != "ALL") (p.queue ?: emptyList()) else (p.originalQueue ?: emptyList())
+        playlists[currentPlaylistId] = p.copy(
+            isLikedFilter = newLikedFilter,
+            originalQueue = original,
+            queue = p.queue ?: emptyList()
+        )
+        updatePlaylistQueue(currentPlaylistId)
+        saveState()
+        return true
+    }
+
     fun toggleRandom() {
         val p = playlists[currentPlaylistId] ?: return
-        playlists[currentPlaylistId] = p.copy(isRandom = !p.isRandom)
+        playlists[currentPlaylistId] = p.copy(
+            isRandom = !p.isRandom,
+            queue = p.queue ?: emptyList(),
+            originalQueue = p.originalQueue ?: emptyList()
+        )
         updatePlaylistQueue(currentPlaylistId)
         saveState()
     }
 
     fun toggleSmart() {
         val p = playlists[currentPlaylistId] ?: return
-        playlists[currentPlaylistId] = p.copy(isSmart = !p.isSmart)
+        playlists[currentPlaylistId] = p.copy(
+            isSmart = !p.isSmart,
+            queue = p.queue ?: emptyList(),
+            originalQueue = p.originalQueue ?: emptyList()
+        )
         saveState()
     }
 
     fun toggleSingleRepeat() {
         val p = playlists[currentPlaylistId] ?: return
-        playlists[currentPlaylistId] = p.copy(isSingleRepeat = !p.isSingleRepeat)
+        playlists[currentPlaylistId] = p.copy(
+            isSingleRepeat = !p.isSingleRepeat,
+            queue = p.queue ?: emptyList(),
+            originalQueue = p.originalQueue ?: emptyList()
+        )
         saveState()
     }
 
@@ -264,7 +330,12 @@ class PlaybackQueueManager(context: Context) {
         val newOrder = if (p.sortCriteria == criteria) {
             if (p.sortOrder == SortOrder.ASCENDING) SortOrder.DESCENDING else SortOrder.ASCENDING
         } else SortOrder.ASCENDING
-        playlists[currentPlaylistId] = p.copy(sortCriteria = criteria, sortOrder = newOrder)
+        playlists[currentPlaylistId] = p.copy(
+            sortCriteria = criteria,
+            sortOrder = newOrder,
+            queue = p.queue ?: emptyList(),
+            originalQueue = p.originalQueue ?: emptyList()
+        )
         updatePlaylistQueue(currentPlaylistId)
         saveState()
     }
@@ -307,7 +378,12 @@ class PlaybackQueueManager(context: Context) {
                     nextId = candidates.random()
                 } else {
                     // Smart Random: All songs played. Auto-reset history and loop.
-                    playlists[currentPlaylistId] = state.copy(history = emptyList(), historyIndex = -1)
+                    playlists[currentPlaylistId] = state.copy(
+                        history = emptyList(),
+                        historyIndex = -1,
+                        queue = state.queue ?: emptyList(),
+                        originalQueue = state.originalQueue ?: emptyList()
+                    )
                     saveState()
                     nextId = queue.random()
                 }
@@ -329,7 +405,12 @@ class PlaybackQueueManager(context: Context) {
                 
                 if (nextId == null) {
                     // Smart Sequential: All songs played. Auto-reset history and loop.
-                    playlists[currentPlaylistId] = state.copy(history = emptyList(), historyIndex = -1)
+                    playlists[currentPlaylistId] = state.copy(
+                        history = emptyList(),
+                        historyIndex = -1,
+                        queue = state.queue ?: emptyList(),
+                        originalQueue = state.originalQueue ?: emptyList()
+                    )
                     saveState()
                     nextId = queue.firstOrNull()
                 }
@@ -359,20 +440,27 @@ class PlaybackQueueManager(context: Context) {
 
     private fun updateCurrentTrackById(id: String, isHistoryMove: Boolean = false, targetHistoryIndex: Int = -1): MusicFile? {
         val state = playlists[currentPlaylistId] ?: return null
-        val qIdx = state.queue.indexOf(id)
+        val qIdx = (state.queue ?: emptyList()).indexOf(id)
         if (qIdx == -1) return null
 
+        val currentHistory = state.history ?: emptyList()
         val newHistory: List<String>
         val newHistoryIdx: Int
         if (isHistoryMove && targetHistoryIndex != -1) {
-            newHistory = state.history
+            newHistory = currentHistory
             newHistoryIdx = targetHistoryIndex
         } else {
-            val lastId = state.history.lastOrNull()
-            newHistory = if (id != lastId) state.history + id else state.history
+            val lastId = currentHistory.lastOrNull()
+            newHistory = if (id != lastId) currentHistory + id else currentHistory
             newHistoryIdx = newHistory.size - 1
         }
-        playlists[currentPlaylistId] = state.copy(currentIndex = qIdx, history = newHistory, historyIndex = newHistoryIdx)
+        playlists[currentPlaylistId] = state.copy(
+            currentIndex = qIdx,
+            history = newHistory,
+            historyIndex = newHistoryIdx,
+            queue = state.queue ?: emptyList(),
+            originalQueue = state.originalQueue ?: emptyList()
+        )
         saveState()
         return allSongs.find { it.id == id }
     }
@@ -415,7 +503,36 @@ class PlaybackQueueManager(context: Context) {
 
     private fun loadState() {
         val json = prefs.getString("playlists", "{}")
-        playlists = gson.fromJson(json, object : TypeToken<MutableMap<String, PlaylistState>>() {}.type) ?: mutableMapOf()
+        try {
+            val rawPlaylists: Map<String, PlaylistState>? = gson.fromJson(json, object : TypeToken<Map<String, PlaylistState>>() {}.type)
+            if (rawPlaylists != null) {
+                playlists = rawPlaylists.mapValues { entry ->
+                    val p = entry.value
+                    val safeQueue = p.queue ?: emptyList()
+                    val safeOrig = if (p.originalQueue.isNullOrEmpty() && entry.key != "ALL") safeQueue else (p.originalQueue ?: emptyList())
+                    PlaylistState(
+                        id = p.id ?: entry.key,
+                        name = p.name ?: "Unknown",
+                        type = p.type ?: PlaylistType.PERMANENT,
+                        queue = safeQueue,
+                        originalQueue = safeOrig,
+                        currentIndex = p.currentIndex,
+                        history = p.history ?: emptyList(),
+                        historyIndex = p.historyIndex,
+                        isRandom = p.isRandom,
+                        isSmart = p.isSmart,
+                        isSingleRepeat = p.isSingleRepeat,
+                        isLikedFilter = p.isLikedFilter,
+                        sortCriteria = p.sortCriteria ?: SortCriteria.DATE,
+                        sortOrder = p.sortOrder ?: SortOrder.DESCENDING
+                    )
+                }.toMutableMap()
+            } else {
+                playlists = mutableMapOf()
+            }
+        } catch (e: Exception) {
+            playlists = mutableMapOf()
+        }
         currentPlaylistId = prefs.getString("current_id", "ALL") ?: "ALL"
     }
 

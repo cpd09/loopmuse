@@ -5,9 +5,10 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [SongMetaEntity::class], version = 2, exportSchema = false)
+@Database(entities = [SongMetaEntity::class, AlarmEntity::class], version = 4, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun songMetaDao(): SongMetaDao
+    abstract fun alarmDao(): AlarmDao
 
     companion object {
         @Volatile

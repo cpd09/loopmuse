@@ -130,21 +130,32 @@ class MusicServiceConnection(private val context: Context) {
     fun toggleSmart() { musicService?.toggleSmart() }
     fun toggleSingleRepeat() { musicService?.toggleSingleRepeat() }
     fun toggleTasteMode() { musicService?.toggleTasteMode() }
+    fun toggleLikedFilter(): Boolean = musicService?.toggleLikedFilter() ?: false
     fun switchPlaylist(id: String) { musicService?.switchPlaylist(id) }
     fun addCustomPlaylist(name: String, ids: List<String>) { musicService?.addCustomPlaylist(name, ids) }
     fun updateCustomPlaylist(id: String, name: String, ids: List<String>) { musicService?.updateCustomPlaylist(id, name, ids) }
     fun deletePlaylist(id: String) { musicService?.deletePlaylist(id) }
     fun searchAndCreatePlaylist(query: String, type: String) { musicService?.searchAndCreatePlaylist(query, type) }
+    fun searchWithFilters(query: String, category: String, isLikedOnly: Boolean, selectedVibes: Set<String>, selectedOccasions: Set<String>) {
+        musicService?.searchWithFilters(query, category, isLikedOnly, selectedVibes, selectedOccasions)
+    }
     fun toggleSelectionMode() { musicService?.toggleSelectionMode() }
     fun toggleSelection(id: String) { musicService?.toggleSelection(id) }
     fun toggleLike(fingerprintId: String) { musicService?.toggleLike(fingerprintId) }
     
     // --- Tags ---
+    suspend fun getAllSongMetas(): List<com.example.loopmuse.data.db.SongMetaEntity> = musicService?.getAllSongMetas() ?: emptyList()
     suspend fun getSongMeta(fingerprintId: String): com.example.loopmuse.data.db.SongMetaEntity? {
         return musicService?.getSongMeta(fingerprintId)
     }
     fun updateSongTags(fingerprintId: String, vibeTags: String, occasionTags: String) {
         musicService?.updateSongTags(fingerprintId, vibeTags, occasionTags)
+    }
+
+    // --- Alarm ---
+    fun scheduleAlarm(alarm: com.example.loopmuse.data.db.AlarmEntity) {
+        val scheduler = com.example.loopmuse.service.alarm.AlarmScheduler(context)
+        scheduler.scheduleAlarm(alarm)
     }
 
     fun selectAll() { musicService?.selectAll() }

@@ -122,7 +122,10 @@ class MusicPlaybackService : Service() {
         // Sync liked songs from DB
         serviceScope.launch {
             appDatabase.songMetaDao().getLikedSongs().collect { likedEntities ->
-                _likedFingerprints.value = likedEntities.map { it.fingerprintId }.toSet()
+                val set = likedEntities.map { it.fingerprintId }.toSet()
+                _likedFingerprints.value = set
+                queueManager.setLikedFingerprints(set)
+                syncWithQueueManager()
             }
         }
 
@@ -286,26 +289,91 @@ class MusicPlaybackService : Service() {
     fun addCustomPlaylist(name: String, ids: List<String>) { queueManager.addCustomPlaylist(name, ids); syncWithQueueManager() }
     fun updateCustomPlaylist(id: String, name: String, ids: List<String>) { queueManager.updateCustomPlaylist(id, name, ids); syncWithQueueManager() }
     fun deletePlaylist(id: String) { queueManager.deletePlaylist(id); syncWithQueueManager() }
-    fun searchAndCreatePlaylist(query: String, type: String) {
+
+    fun toggleLikedFilter(): Boolean {
+        val result = queueManager.toggleLikedFilter()
+        syncWithQueueManager()
+        return result
+    }
+
+    fun searchWithFilters(
+        query: String,
+        category: String = "전체",
+        isLikedOnly: Boolean = false,
+        selectedVibes: Set<String> = emptySet(),
+        selectedOccasions: Set<String> = emptySet()
+    ) {
         serviceScope.launch {
             val dbMetas = appDatabase.songMetaDao().getAllMetadata().first()
             val metaMap = dbMetas.associateBy { it.fingerprintId }
 
             val results = cachedAllSongs.filter { song ->
                 val meta = metaMap[song.fingerprintId]
-                when (type) {
-                    "가수" -> song.artist.contains(query, ignoreCase = true)
-                    "앨범" -> song.album.contains(query, ignoreCase = true)
-                    "느낌" -> meta?.vibeTags?.contains(query, ignoreCase = true) == true
-                    "상황" -> meta?.occasionTags?.contains(query, ignoreCase = true) == true
-                    "좋아요" -> meta?.isLiked == true
-                    else -> song.file.name.contains(query, ignoreCase = true) || song.title.contains(query, ignoreCase = true)
+
+                // 1. Text filter
+                val matchesText = if (query.isBlank()) {
+                    true
+                } else {
+                    when (category) {
+                        "가수" -> song.artist.contains(query, ignoreCase = true)
+                        "앨범" -> song.album.contains(query, ignoreCase = true)
+                        "파일명" -> song.file.name.contains(query, ignoreCase = true) || song.title.contains(query, ignoreCase = true)
+                        else -> song.title.contains(query, ignoreCase = true) ||
+                                song.artist.contains(query, ignoreCase = true) ||
+                                song.album.contains(query, ignoreCase = true) ||
+                                song.file.name.contains(query, ignoreCase = true)
+                    }
                 }
+
+                // 2. Liked filter
+                val matchesLiked = if (isLikedOnly) {
+                    meta?.isLiked == true
+                } else {
+                    true
+                }
+
+                // 3. Vibe tags filter (OR logic among selected vibes)
+                val matchesVibe = if (selectedVibes.isNotEmpty()) {
+                    val songVibes = meta?.vibeTags?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet() ?: emptySet()
+                    selectedVibes.any { songVibes.contains(it) }
+                } else {
+                    true
+                }
+
+                // 4. Occasion tags filter (OR logic among selected occasions)
+                val matchesOccasion = if (selectedOccasions.isNotEmpty()) {
+                    val songOccasions = meta?.occasionTags?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet() ?: emptySet()
+                    selectedOccasions.any { songOccasions.contains(it) }
+                } else {
+                    true
+                }
+
+                matchesText && matchesLiked && matchesVibe && matchesOccasion
             }.map { it.id }
-            
-            queueManager.setTemporaryPlaylist(if (type == "좋아요") "좋아요 한 곡" else query, results)
+
+            val titleParts = mutableListOf<String>()
+            if (query.isNotBlank()) titleParts.add("'$query'")
+            if (isLikedOnly) titleParts.add("좋아요")
+            if (selectedVibes.isNotEmpty()) titleParts.add(selectedVibes.joinToString(","))
+            if (selectedOccasions.isNotEmpty()) titleParts.add(selectedOccasions.joinToString(","))
+            val playlistTitle = if (titleParts.isEmpty()) "전체 검색" else "검색: ${titleParts.joinToString(" / ")}"
+
+            queueManager.setTemporaryPlaylist(playlistTitle, results)
             syncWithQueueManager()
         }
+    }
+
+    fun searchAndCreatePlaylist(query: String, type: String) {
+        when (type) {
+            "느낌" -> searchWithFilters("", "전체", false, setOf(query), emptySet())
+            "상황" -> searchWithFilters("", "전체", false, emptySet(), setOf(query))
+            "좋아요" -> searchWithFilters("", "전체", true, emptySet(), emptySet())
+            else -> searchWithFilters(query, type, false, emptySet(), emptySet())
+        }
+    }
+
+    suspend fun getAllSongMetas(): List<com.example.loopmuse.data.db.SongMetaEntity> {
+        return appDatabase.songMetaDao().getAllMetadata().first()
     }
 
     fun toggleSelectionMode() {
