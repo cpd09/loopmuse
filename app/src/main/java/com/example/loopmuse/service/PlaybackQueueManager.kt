@@ -1,5 +1,3 @@
-@file:Suppress("USELESS_ELVIS", "UNNECESSARY_SAFE_CALL", "SENSELESS_COMPARISON")
-
 package com.example.loopmuse.service
 
 import android.content.Context
@@ -86,7 +84,7 @@ class PlaybackQueueManager(context: Context) {
 
     private fun updatePlaylistQueue(id: String) {
         val state = playlists[id] ?: return
-        val baseQueueIds = (if (!state.originalQueue.isNullOrEmpty()) state.originalQueue else state.queue) ?: emptyList()
+        val baseQueueIds = if (state.originalQueue.isNotEmpty()) state.originalQueue else state.queue
         var songsInLibrary = if (id == "ALL") allSongs else {
             allSongs.filter { song -> baseQueueIds.contains(song.id) }
         }
@@ -98,7 +96,7 @@ class PlaybackQueueManager(context: Context) {
         }
         
         val newQueue = if (state.isRandom) {
-            val existingIds = (state.queue ?: emptyList()).filter { qId -> songsInLibrary.any { it.id == qId } }
+            val existingIds = state.queue.filter { qId -> songsInLibrary.any { it.id == qId } }
             val newIds = songsInLibrary.map { it.id }.filter { nId -> !existingIds.contains(nId) }.shuffled()
             existingIds + newIds
         } else {
@@ -109,13 +107,13 @@ class PlaybackQueueManager(context: Context) {
         }
 
         var newIndex = if (state.currentIndex != -1) {
-            val currentId = state.queue?.getOrNull(state.currentIndex)
+            val currentId = state.queue.getOrNull(state.currentIndex)
             newQueue.indexOf(currentId).coerceAtLeast(-1)
         } else -1
 
         if (newIndex == -1 && newQueue.isNotEmpty()) newIndex = 0
 
-        val newHistory = (state.history ?: emptyList()).filter { hId -> songsInLibrary.any { it.id == hId } }
+        val newHistory = state.history.filter { hId -> songsInLibrary.any { it.id == hId } }
         val finalHistory = if (newIndex != -1 && newHistory.isEmpty() && newQueue.isNotEmpty()) {
             listOf(newQueue[newIndex])
         } else newHistory
@@ -123,13 +121,12 @@ class PlaybackQueueManager(context: Context) {
         val finalHistoryIndex = if (newIndex != -1 && state.historyIndex == -1 && newQueue.isNotEmpty()) {
             0
         } else if (state.historyIndex != -1) {
-            val currentHistId = state.history?.getOrNull(state.historyIndex)
+            val currentHistId = state.history.getOrNull(state.historyIndex)
             finalHistory.indexOf(currentHistId).coerceAtLeast(-1)
         } else -1
 
         playlists[id] = state.copy(
             queue = newQueue,
-            originalQueue = state.originalQueue ?: emptyList(),
             currentIndex = newIndex,
             history = finalHistory,
             historyIndex = finalHistoryIndex
@@ -151,8 +148,6 @@ class PlaybackQueueManager(context: Context) {
             val p = playlists[id]
             if (p != null) {
                 playlists[id] = p.copy(
-                    queue = p.queue ?: emptyList(),
-                    originalQueue = p.originalQueue ?: emptyList(),
                     currentIndex = -1,
                     history = emptyList(),
                     historyIndex = -1,
@@ -178,8 +173,6 @@ class PlaybackQueueManager(context: Context) {
         
         // 1. Reset standard options to default
         val resetState = p.copy(
-            queue = p.queue ?: emptyList(),
-            originalQueue = p.originalQueue ?: emptyList(),
             currentIndex = -1,
             history = emptyList(),
             historyIndex = -1,
@@ -201,8 +194,6 @@ class PlaybackQueueManager(context: Context) {
         val updatedP = playlists[id]
         if (updatedP != null && updatedP.queue.isNotEmpty()) {
             playlists[id] = updatedP.copy(
-                queue = updatedP.queue,
-                originalQueue = updatedP.originalQueue ?: emptyList(),
                 currentIndex = 0,
                 history = listOf(updatedP.queue[0]),
                 historyIndex = 0
@@ -275,7 +266,7 @@ class PlaybackQueueManager(context: Context) {
         val newLikedFilter = !p.isLikedFilter
         
         if (newLikedFilter) {
-            val baseQueueIds = (if (!p.originalQueue.isNullOrEmpty()) p.originalQueue else p.queue) ?: emptyList()
+            val baseQueueIds = if (p.originalQueue.isNotEmpty()) p.originalQueue else p.queue
             val songsInPlaylist = if (currentPlaylistId == "ALL") allSongs else {
                 allSongs.filter { song -> baseQueueIds.contains(song.id) }
             }
@@ -285,11 +276,10 @@ class PlaybackQueueManager(context: Context) {
             }
         }
         
-        val original = if (p.originalQueue.isNullOrEmpty() && currentPlaylistId != "ALL") (p.queue ?: emptyList()) else (p.originalQueue ?: emptyList())
+        val original = if (p.originalQueue.isEmpty() && currentPlaylistId != "ALL") p.queue else p.originalQueue
         playlists[currentPlaylistId] = p.copy(
             isLikedFilter = newLikedFilter,
-            originalQueue = original,
-            queue = p.queue ?: emptyList()
+            originalQueue = original
         )
         updatePlaylistQueue(currentPlaylistId)
         saveState()
@@ -298,32 +288,20 @@ class PlaybackQueueManager(context: Context) {
 
     fun toggleRandom() {
         val p = playlists[currentPlaylistId] ?: return
-        playlists[currentPlaylistId] = p.copy(
-            isRandom = !p.isRandom,
-            queue = p.queue ?: emptyList(),
-            originalQueue = p.originalQueue ?: emptyList()
-        )
+        playlists[currentPlaylistId] = p.copy(isRandom = !p.isRandom)
         updatePlaylistQueue(currentPlaylistId)
         saveState()
     }
 
     fun toggleSmart() {
         val p = playlists[currentPlaylistId] ?: return
-        playlists[currentPlaylistId] = p.copy(
-            isSmart = !p.isSmart,
-            queue = p.queue ?: emptyList(),
-            originalQueue = p.originalQueue ?: emptyList()
-        )
+        playlists[currentPlaylistId] = p.copy(isSmart = !p.isSmart)
         saveState()
     }
 
     fun toggleSingleRepeat() {
         val p = playlists[currentPlaylistId] ?: return
-        playlists[currentPlaylistId] = p.copy(
-            isSingleRepeat = !p.isSingleRepeat,
-            queue = p.queue ?: emptyList(),
-            originalQueue = p.originalQueue ?: emptyList()
-        )
+        playlists[currentPlaylistId] = p.copy(isSingleRepeat = !p.isSingleRepeat)
         saveState()
     }
 
@@ -332,12 +310,7 @@ class PlaybackQueueManager(context: Context) {
         val newOrder = if (p.sortCriteria == criteria) {
             if (p.sortOrder == SortOrder.ASCENDING) SortOrder.DESCENDING else SortOrder.ASCENDING
         } else SortOrder.ASCENDING
-        playlists[currentPlaylistId] = p.copy(
-            sortCriteria = criteria,
-            sortOrder = newOrder,
-            queue = p.queue ?: emptyList(),
-            originalQueue = p.originalQueue ?: emptyList()
-        )
+        playlists[currentPlaylistId] = p.copy(sortCriteria = criteria, sortOrder = newOrder)
         updatePlaylistQueue(currentPlaylistId)
         saveState()
     }
@@ -380,12 +353,7 @@ class PlaybackQueueManager(context: Context) {
                     nextId = candidates.random()
                 } else {
                     // Smart Random: All songs played. Auto-reset history and loop.
-                    playlists[currentPlaylistId] = state.copy(
-                        history = emptyList(),
-                        historyIndex = -1,
-                        queue = state.queue ?: emptyList(),
-                        originalQueue = state.originalQueue ?: emptyList()
-                    )
+                    playlists[currentPlaylistId] = state.copy(history = emptyList(), historyIndex = -1)
                     saveState()
                     nextId = queue.random()
                 }
@@ -407,12 +375,7 @@ class PlaybackQueueManager(context: Context) {
                 
                 if (nextId == null) {
                     // Smart Sequential: All songs played. Auto-reset history and loop.
-                    playlists[currentPlaylistId] = state.copy(
-                        history = emptyList(),
-                        historyIndex = -1,
-                        queue = state.queue ?: emptyList(),
-                        originalQueue = state.originalQueue ?: emptyList()
-                    )
+                    playlists[currentPlaylistId] = state.copy(history = emptyList(), historyIndex = -1)
                     saveState()
                     nextId = queue.firstOrNull()
                 }
@@ -442,10 +405,10 @@ class PlaybackQueueManager(context: Context) {
 
     private fun updateCurrentTrackById(id: String, isHistoryMove: Boolean = false, targetHistoryIndex: Int = -1): MusicFile? {
         val state = playlists[currentPlaylistId] ?: return null
-        val qIdx = (state.queue ?: emptyList()).indexOf(id)
+        val qIdx = state.queue.indexOf(id)
         if (qIdx == -1) return null
 
-        val currentHistory = state.history ?: emptyList()
+        val currentHistory = state.history
         val newHistory: List<String>
         val newHistoryIdx: Int
         if (isHistoryMove && targetHistoryIndex != -1) {
@@ -459,9 +422,7 @@ class PlaybackQueueManager(context: Context) {
         playlists[currentPlaylistId] = state.copy(
             currentIndex = qIdx,
             history = newHistory,
-            historyIndex = newHistoryIdx,
-            queue = state.queue ?: emptyList(),
-            originalQueue = state.originalQueue ?: emptyList()
+            historyIndex = newHistoryIdx
         )
         saveState()
         return allSongs.find { it.id == id }
@@ -506,28 +467,10 @@ class PlaybackQueueManager(context: Context) {
     private fun loadState() {
         val json = prefs.getString("playlists", "{}")
         try {
-            val rawPlaylists: Map<String, PlaylistState>? = gson.fromJson(json, object : TypeToken<Map<String, PlaylistState>>() {}.type)
+            val rawPlaylists: Map<String, PlaylistStateDto>? = gson.fromJson(json, object : TypeToken<Map<String, PlaylistStateDto>>() {}.type)
             if (rawPlaylists != null) {
                 playlists = rawPlaylists.mapValues { entry ->
-                    val p = entry.value
-                    val safeQueue = p.queue ?: emptyList()
-                    val safeOrig = if (p.originalQueue.isNullOrEmpty() && entry.key != "ALL") safeQueue else (p.originalQueue ?: emptyList())
-                    PlaylistState(
-                        id = p.id ?: entry.key,
-                        name = p.name ?: "Unknown",
-                        type = p.type ?: PlaylistType.PERMANENT,
-                        queue = safeQueue,
-                        originalQueue = safeOrig,
-                        currentIndex = p.currentIndex,
-                        history = p.history ?: emptyList(),
-                        historyIndex = p.historyIndex,
-                        isRandom = p.isRandom,
-                        isSmart = p.isSmart,
-                        isSingleRepeat = p.isSingleRepeat,
-                        isLikedFilter = p.isLikedFilter,
-                        sortCriteria = p.sortCriteria ?: SortCriteria.DATE,
-                        sortOrder = p.sortOrder ?: SortOrder.DESCENDING
-                    )
+                    entry.value.toDomain(entry.key)
                 }.toMutableMap()
             } else {
                 playlists = mutableMapOf()
@@ -544,4 +487,42 @@ class PlaybackQueueManager(context: Context) {
     }
 
     fun getPlayedSongIds(): Set<String> = playlists[currentPlaylistId]?.history?.toSet() ?: emptySet()
+}
+
+private data class PlaylistStateDto(
+    val id: String? = null,
+    val name: String? = null,
+    val type: PlaylistType? = null,
+    val queue: List<String>? = null,
+    val originalQueue: List<String>? = null,
+    val currentIndex: Int? = null,
+    val history: List<String>? = null,
+    val historyIndex: Int? = null,
+    val isRandom: Boolean? = null,
+    val isSmart: Boolean? = null,
+    val isSingleRepeat: Boolean? = null,
+    val isLikedFilter: Boolean? = null,
+    val sortCriteria: SortCriteria? = null,
+    val sortOrder: SortOrder? = null
+) {
+    fun toDomain(fallbackId: String): PlaylistState {
+        val safeQueue = queue ?: emptyList()
+        val safeOrig = if (!originalQueue.isNullOrEmpty()) originalQueue else if (fallbackId != "ALL") safeQueue else emptyList()
+        return PlaylistState(
+            id = id ?: fallbackId,
+            name = name ?: "Unknown",
+            type = type ?: PlaylistType.PERMANENT,
+            queue = safeQueue,
+            originalQueue = safeOrig,
+            currentIndex = currentIndex ?: -1,
+            history = history ?: emptyList(),
+            historyIndex = historyIndex ?: -1,
+            isRandom = isRandom ?: false,
+            isSmart = isSmart ?: true,
+            isSingleRepeat = isSingleRepeat ?: false,
+            isLikedFilter = isLikedFilter ?: false,
+            sortCriteria = sortCriteria ?: SortCriteria.DATE,
+            sortOrder = sortOrder ?: SortOrder.DESCENDING
+        )
+    }
 }
