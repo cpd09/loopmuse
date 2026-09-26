@@ -59,6 +59,7 @@ android {
     lint {
         checkReleaseBuilds false
         abortOnError false
+        disable 'GradleDependency', 'NewerVersionAvailable', 'OldTargetApi'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_11
