@@ -136,10 +136,10 @@ cd LoopMuse
 
 ### 앱 버전 관리
 
-- 앱 버전의 기준은 `app/version.properties`의 `VERSION_MAJOR`와 `VERSION_CODE`입니다. `VERSION_CODE=38`이면 화면에 표시되는 `versionName`은 `1.0038`입니다.
+- 앱 버전의 기준은 `app/version.properties`의 `VERSION_MAJOR`와 `VERSION_CODE`입니다. `VERSION_CODE=39`이면 화면에 표시되는 `versionName`은 `1.0039`입니다.
 - 빌드만으로 버전 값이 바뀌지 않습니다. 사용자에게 전달할 새 APK를 만들 때 `VERSION_CODE`를 이전 배포본보다 높인 뒤, 변경 사항과 함께 커밋합니다.
-- APK 이름에는 버전 이름, 버전 코드, 빌드 종류가 들어갑니다. 예: `loopmuse-1.0038-c38-debug.apk`.
-- 확인한 커밋에 같은 이름의 Git 태그를 붙입니다. 예: `git tag v1.0038` 다음 `git push origin main v1.0038`. 태그를 푸시하면 GitHub Actions가 버전 일치를 확인하고 debug APK를 빌드해 아티팩트로 올립니다.
+- APK 이름에는 버전 이름, 버전 코드, 빌드 종류가 들어갑니다. 예: `loopmuse-1.0039-c39-debug.apk`.
+- 확인한 커밋에 같은 이름의 Git 태그를 붙입니다. 예: `git tag v1.0039` 다음 `git push origin main v1.0039`. 태그를 푸시하면 GitHub Actions가 버전 일치를 확인하고 debug APK를 빌드해 아티팩트로 올립니다.
 - 앱 홈에는 설치된 앱의 버전 이름이, 설정의 앱 정보에는 버전 이름과 코드가 표시됩니다. 홈의 날짜는 앱 설치·업데이트 날짜입니다.
 
 ---

@@ -19,17 +19,8 @@ class FirebaseCommunityRepository : CommunityRepository {
     private val reportsCollection = firestore.collection("reports")
     private val usersCollection = firestore.collection("users")
     
-    // Check if Firebase is actually configured to avoid crashes if google-services.json is missing
-    private val isFirebaseAvailable: Boolean
-        get() = try {
-            auth.app != null
-            true
-        } catch (e: Exception) {
-            false
-        }
-
     override suspend fun signInAnonymously(): String? {
-        if (!isFirebaseAvailable) return "MOCK_UID"
+        auth.currentUser?.uid?.let { return it }
         return try {
             val result = auth.signInAnonymously().await()
             result.user?.uid
@@ -39,16 +30,10 @@ class FirebaseCommunityRepository : CommunityRepository {
     }
 
     override fun getCurrentUid(): String? {
-        if (!isFirebaseAvailable) return "MOCK_UID"
         return auth.currentUser?.uid
     }
 
     override fun getPosts(): Flow<List<SongPost>> = callbackFlow {
-        if (!isFirebaseAvailable) {
-            trySend(emptyList())
-            close()
-            return@callbackFlow
-        }
         val subscription = postsCollection
             .orderBy("timestamp", Query.Direction.DESCENDING)
             .addSnapshotListener { snapshot, error ->
@@ -65,7 +50,6 @@ class FirebaseCommunityRepository : CommunityRepository {
     }
 
     override suspend fun addPost(post: SongPost): Result<Unit> {
-        if (!isFirebaseAvailable) return Result.success(Unit)
         return try {
             postsCollection.document(post.id).set(post).await()
             Result.success(Unit)
@@ -75,7 +59,6 @@ class FirebaseCommunityRepository : CommunityRepository {
     }
 
     override suspend fun deletePost(postId: String): Result<Unit> {
-        if (!isFirebaseAvailable) return Result.success(Unit)
         return try {
             postsCollection.document(postId).delete().await()
             Result.success(Unit)
@@ -85,7 +68,6 @@ class FirebaseCommunityRepository : CommunityRepository {
     }
 
     override suspend fun reportPost(postId: String, reason: String): Result<Unit> {
-        if (!isFirebaseAvailable) return Result.success(Unit)
         return try {
             val uid = getCurrentUid() ?: return Result.failure(Exception("Not logged in"))
             val report = Report(postId = postId, reporterUid = uid, reason = reason)
@@ -97,10 +79,6 @@ class FirebaseCommunityRepository : CommunityRepository {
     }
 
     override suspend fun getUserProfile(uid: String): Result<UserProfile> {
-        if (!isFirebaseAvailable) {
-            // Hardcode your mock uid as admin for now if testing without Firebase
-            return Result.success(UserProfile(uid = uid, isAdmin = (uid == "MOCK_UID"), isBanned = false))
-        }
         return try {
             val doc = usersCollection.document(uid).get().await()
             val profile = doc.toObject(UserProfile::class.java)
@@ -116,7 +94,6 @@ class FirebaseCommunityRepository : CommunityRepository {
     }
 
     override suspend fun banUser(uid: String): Result<Unit> {
-        if (!isFirebaseAvailable) return Result.success(Unit)
         return try {
             usersCollection.document(uid).set(UserProfile(uid = uid, isBanned = true)).await()
             Result.success(Unit)

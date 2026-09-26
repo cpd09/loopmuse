@@ -58,6 +58,9 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.loopmuse.community.ui.CommunityLoungeScreen
+import com.example.loopmuse.community.ui.RecommendationComposer
+import com.example.loopmuse.community.ui.RecommendationDraft
+import com.example.loopmuse.community.viewmodel.CommunityViewModel
 import com.example.loopmuse.data.MusicFile
 import com.example.loopmuse.service.*
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
@@ -155,7 +158,7 @@ fun HomeScreen() {
     val songCounts by musicServiceConnection.songCounts.collectAsStateWithLifecycle()
 
     var showQueueEndedDialog by remember { mutableStateOf(value = false) }
-    var songForTagEdit by remember { mutableStateOf<MusicFile?>(null) }
+    var songForEdit by remember { mutableStateOf<MusicFile?>(null) }
     var showAlarmDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(isServiceConnected) {
@@ -341,8 +344,8 @@ fun HomeScreen() {
                             onLikeClick = { fingerprintId ->
                                 musicServiceConnection.toggleLike(fingerprintId)
                             },
-                            onEditTagsClick = { song ->
-                                songForTagEdit = song
+                            onEditSongClick = { song ->
+                                songForEdit = song
                             },
                             isSelectionMode = isSelectionMode,
                             isSelectionPlayback = isSelectionPlayback
@@ -357,11 +360,11 @@ fun HomeScreen() {
     }
 
     // --- Dialogs ---
-    songForTagEdit?.let { song ->
-        TagEditDialog(
+    songForEdit?.let { song ->
+        SongEditDialog(
             song = song,
             connection = musicServiceConnection,
-            onDismiss = { songForTagEdit = null }
+            onDismiss = { songForEdit = null }
         )
     }
 
@@ -1105,11 +1108,24 @@ fun SortCombo(state: PlaylistState?, connection: MusicServiceConnection) {
 }
 
 @Composable
-fun TagEditDialog(
+fun SongEditDialog(
     song: MusicFile,
     connection: MusicServiceConnection,
     onDismiss: () -> Unit
 ) {
+    var selectedTab by remember { mutableIntStateOf(0) }
+    var recommendation by remember(song.fingerprintId) {
+        mutableStateOf(
+            RecommendationDraft(
+                artist = song.artist.takeUnless { it.equals("Unknown Artist", ignoreCase = true) } ?: "",
+                title = song.title,
+                includeSong = true
+            )
+        )
+    }
+    var isSubmitting by remember { mutableStateOf(false) }
+    var publishError by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
     var vibeTags by remember { mutableStateOf(setOf<String>()) }
     var occasionTags by remember { mutableStateOf(setOf<String>()) }
     var isLoading by remember { mutableStateOf(true) }
@@ -1134,76 +1150,110 @@ fun TagEditDialog(
         isLoading = false
     }
 
-    if (!isLoading) {
-        Dialog(onDismissRequest = onDismiss) {
-            Surface(
-                modifier = Modifier.fillMaxWidth().wrapContentHeight(),
-                shape = RoundedCornerShape(24.dp),
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 8.dp
-            ) {
-                Column(modifier = Modifier.padding(20.dp)) {
-                    Text("태그 편집", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                    Text(song.title, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Color.Gray)
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Text("어떤 느낌인가요? (Vibe)", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                    @OptIn(ExperimentalLayoutApi::class)
-                    FlowRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        (defaultVibes + customVibes).forEach { tag ->
-                            val isSelected = vibeTags.contains(tag)
-                            FilterChip(
-                                selected = isSelected,
-                                onClick = { vibeTags = if (isSelected) vibeTags - tag else vibeTags + tag },
-                                label = { Text(tag, fontSize = 12.sp) }
-                            )
-                        }
-                    }
-                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        BasicTextField(
-                            value = newVibeInput, onValueChange = { newVibeInput = it },
-                            modifier = Modifier.weight(1f).height(32.dp).border(1.dp, Color.LightGray, RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 6.dp),
-                            singleLine = true, textStyle = LocalTextStyle.current.copy(fontSize = 12.sp),
-                            decorationBox = { inner -> if (newVibeInput.isEmpty()) Text("+ 직접 입력", fontSize = 12.sp, color = Color.Gray) else inner() }
+    Dialog(onDismissRequest = { if (!isSubmitting) onDismiss() }) {
+        Surface(
+            modifier = Modifier.fillMaxWidth().heightIn(max = 600.dp).imePadding(),
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 8.dp
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Text("곡 정보", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                Text(song.title, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Color.Gray)
+                Spacer(modifier = Modifier.height(8.dp))
+                TabRow(selectedTabIndex = selectedTab) {
+                    Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text("태그 편집") })
+                    Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text("곡 추천") })
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                if (selectedTab == 1) {
+                    val communityViewModel: CommunityViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+                    Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                        RecommendationComposer(
+                            draft = recommendation,
+                            onDraftChange = { recommendation = it; publishError = null },
+                            isSubmitting = isSubmitting,
+                            error = publishError,
+                            requireSong = true,
+                            onPublish = {
+                                scope.launch {
+                                    isSubmitting = true
+                                    publishError = null
+                                    val result = communityViewModel.addPost(
+                                        recommendation.message,
+                                        recommendation.title,
+                                        recommendation.artist
+                                    )
+                                    isSubmitting = false
+                                    if (result.isSuccess) onDismiss()
+                                    else publishError = result.exceptionOrNull()?.message ?: "게시하지 못했습니다."
+                                }
+                            }
                         )
-                        IconButton(onClick = { if (newVibeInput.isNotBlank()) { customVibes = customVibes + newVibeInput; vibeTags = vibeTags + newVibeInput; newVibeInput = "" } }) {
-                            Icon(Icons.Default.AddCircle, contentDescription = "추가", tint = MaterialTheme.colorScheme.primary)
-                        }
+                        TextButton(onClick = onDismiss, enabled = !isSubmitting) { Text("취소") }
                     }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Text("어떨 때 좋나요? (Occasion)", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                    @OptIn(ExperimentalLayoutApi::class)
-                    FlowRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        (defaultOccasions + customOccasions).forEach { tag ->
-                            val isSelected = occasionTags.contains(tag)
-                            FilterChip(
-                                selected = isSelected,
-                                onClick = { occasionTags = if (isSelected) occasionTags - tag else occasionTags + tag },
-                                label = { Text(tag, fontSize = 12.sp) }
+                } else if (isLoading) {
+                    CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
+                } else {
+                    Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                        Text("어떤 느낌인가요? (Vibe)", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        @OptIn(ExperimentalLayoutApi::class)
+                        FlowRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            (defaultVibes + customVibes).forEach { tag ->
+                                val isSelected = vibeTags.contains(tag)
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = { vibeTags = if (isSelected) vibeTags - tag else vibeTags + tag },
+                                    label = { Text(tag, fontSize = 12.sp) }
+                                )
+                            }
+                        }
+                        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            BasicTextField(
+                                value = newVibeInput, onValueChange = { newVibeInput = it },
+                                modifier = Modifier.weight(1f).height(32.dp).border(1.dp, Color.LightGray, RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 6.dp),
+                                singleLine = true, textStyle = LocalTextStyle.current.copy(fontSize = 12.sp),
+                                decorationBox = { inner -> if (newVibeInput.isEmpty()) Text("+ 직접 입력", fontSize = 12.sp, color = Color.Gray) else inner() }
                             )
+                            IconButton(onClick = { if (newVibeInput.isNotBlank()) { customVibes = customVibes + newVibeInput; vibeTags = vibeTags + newVibeInput; newVibeInput = "" } }) {
+                                Icon(Icons.Default.AddCircle, contentDescription = "추가", tint = MaterialTheme.colorScheme.primary)
+                            }
                         }
-                    }
-                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        BasicTextField(
-                            value = newOccasionInput, onValueChange = { newOccasionInput = it },
-                            modifier = Modifier.weight(1f).height(32.dp).border(1.dp, Color.LightGray, RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 6.dp),
-                            singleLine = true, textStyle = LocalTextStyle.current.copy(fontSize = 12.sp),
-                            decorationBox = { inner -> if (newOccasionInput.isEmpty()) Text("+ 직접 입력", fontSize = 12.sp, color = Color.Gray) else inner() }
-                        )
-                        IconButton(onClick = { if (newOccasionInput.isNotBlank()) { customOccasions = customOccasions + newOccasionInput; occasionTags = occasionTags + newOccasionInput; newOccasionInput = "" } }) {
-                            Icon(Icons.Default.AddCircle, contentDescription = "추가", tint = MaterialTheme.colorScheme.primary)
-                        }
-                    }
 
-                    Spacer(modifier = Modifier.height(24.dp))
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        TextButton(onClick = onDismiss) { Text("취소") }
-                        Button(onClick = {
-                            connection.updateSongTags(song.fingerprintId, vibeTags.joinToString(","), occasionTags.joinToString(","))
-                            onDismiss()
-                        }) { Text("저장") }
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Text("어떨 때 좋나요? (Occasion)", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        @OptIn(ExperimentalLayoutApi::class)
+                        FlowRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            (defaultOccasions + customOccasions).forEach { tag ->
+                                val isSelected = occasionTags.contains(tag)
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = { occasionTags = if (isSelected) occasionTags - tag else occasionTags + tag },
+                                    label = { Text(tag, fontSize = 12.sp) }
+                                )
+                            }
+                        }
+                        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            BasicTextField(
+                                value = newOccasionInput, onValueChange = { newOccasionInput = it },
+                                modifier = Modifier.weight(1f).height(32.dp).border(1.dp, Color.LightGray, RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 6.dp),
+                                singleLine = true, textStyle = LocalTextStyle.current.copy(fontSize = 12.sp),
+                                decorationBox = { inner -> if (newOccasionInput.isEmpty()) Text("+ 직접 입력", fontSize = 12.sp, color = Color.Gray) else inner() }
+                            )
+                            IconButton(onClick = { if (newOccasionInput.isNotBlank()) { customOccasions = customOccasions + newOccasionInput; occasionTags = occasionTags + newOccasionInput; newOccasionInput = "" } }) {
+                                Icon(Icons.Default.AddCircle, contentDescription = "추가", tint = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(24.dp))
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                            TextButton(onClick = onDismiss) { Text("취소") }
+                            Button(onClick = {
+                                connection.updateSongTags(song.fingerprintId, vibeTags.joinToString(","), occasionTags.joinToString(","))
+                                onDismiss()
+                            }) { Text("저장") }
+                        }
                     }
                 }
             }
@@ -1258,7 +1308,7 @@ fun NowPlayingCardExpanded(
 fun PlaylistView(
     songs: List<MusicFile>, currentTrack: MusicFile?, playlistState: PlaylistState?,
     playedSongIds: Set<String>, selectedIds: Set<String>, likedFingerprints: Set<String>,
-    onSongClick: (MusicFile) -> Unit, onLikeClick: (String) -> Unit, onEditTagsClick: (MusicFile) -> Unit,
+    onSongClick: (MusicFile) -> Unit, onLikeClick: (String) -> Unit, onEditSongClick: (MusicFile) -> Unit,
     isSelectionMode: Boolean,
     isSelectionPlayback: Boolean
 ) {
@@ -1350,8 +1400,8 @@ fun PlaylistView(
                             Text(text = song.artist, fontSize = 11.sp, color = color.copy(alpha = alpha * 0.7f), fontWeight = weight)
                         }
                         if (!isSelectionMode) {
-                            IconButton(onClick = { onEditTagsClick(song) }, modifier = Modifier.size(24.dp)) {
-                                Icon(Icons.Default.Edit, contentDescription = "태그 편집", tint = Color.Gray.copy(alpha = 0.6f), modifier = Modifier.size(16.dp))
+                            IconButton(onClick = { onEditSongClick(song) }, modifier = Modifier.size(24.dp)) {
+                                Icon(Icons.Default.Edit, contentDescription = "태그 편집 또는 곡 추천", tint = Color.Gray.copy(alpha = 0.6f), modifier = Modifier.size(16.dp))
                             }
                         }
                     }

@@ -4,6 +4,7 @@ import java.util.UUID
 
 data class SongPost(
     val id: String = UUID.randomUUID().toString(),
+    val message: String = "",
     val title: String = "",
     val artist: String = "",
     val vibes: List<String> = emptyList(),
