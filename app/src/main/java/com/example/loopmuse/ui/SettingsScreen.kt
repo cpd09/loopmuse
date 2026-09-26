@@ -1,6 +1,7 @@
 package com.example.loopmuse.ui
 
 import android.net.Uri
+import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -121,11 +122,28 @@ fun SettingsScreen(
             SettingsPage.DATA -> DataBackupPage(Modifier.padding(padding), manager, onRestore, onFresh)
             SettingsPage.ABOUT -> Column(Modifier.fillMaxSize().padding(padding).padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                val version = remember(context) {
-                    runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "-"
+                val (versionName, versionCode) = remember(context) {
+                    runCatching {
+                        val packageInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            context.packageManager.getPackageInfo(
+                                context.packageName,
+                                android.content.pm.PackageManager.PackageInfoFlags.of(0)
+                            )
+                        } else {
+                            @Suppress("DEPRECATION")
+                            context.packageManager.getPackageInfo(context.packageName, 0)
+                        }
+                        @Suppress("DEPRECATION")
+                        val code = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                            packageInfo.longVersionCode
+                        } else {
+                            packageInfo.versionCode.toLong()
+                        }
+                        Pair(packageInfo.versionName ?: "-", code.toString())
+                    }.getOrDefault(Pair("-", "-"))
                 }
                 Text("LoopMuse", style = MaterialTheme.typography.headlineSmall)
-                Text("버전 $version")
+                Text("버전 $versionName (코드 $versionCode)")
                 HorizontalDivider()
                 Text("실행 중인 정보는 앱 내부 데이터베이스에 저장합니다. 선택한 공유 폴더에는 복원용 백업 파일을 별도로 보관합니다.")
             }

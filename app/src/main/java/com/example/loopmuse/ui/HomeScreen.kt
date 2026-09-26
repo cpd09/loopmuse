@@ -84,12 +84,12 @@ fun HomeScreen() {
                 @Suppress("DEPRECATION")
                 context.packageManager.getPackageInfo(context.packageName, 0)
             }
-            val version = packageInfo.versionName ?: "1.0.0"
+            val version = packageInfo.versionName ?: "-"
             val dateFormat = SimpleDateFormat("yyyy.MM.dd", Locale.getDefault())
             val updateDate = dateFormat.format(Date(packageInfo.lastUpdateTime))
-            Pair("v$version", updateDate)
+            Pair(version, updateDate)
         } catch (e: Exception) {
-            Pair("v1.0.0", "2026.09.25")
+            Pair("-", "-")
         }
     }
     

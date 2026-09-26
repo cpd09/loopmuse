@@ -9,26 +9,20 @@ plugins {
 
 def versionPropsFile = file('version.properties')
 Properties versionProps = new Properties()
-if (!versionPropsFile.exists()) {
-    versionProps['VERSION_CODE'] = '19'
-    versionProps.store(versionPropsFile.newWriter(), null)
-} else {
-    versionProps.load(versionPropsFile.newDataInputStream())
+if (!versionPropsFile.isFile()) {
+    throw new GradleException('app/version.properties is missing')
 }
+versionPropsFile.withInputStream { versionProps.load(it) }
 
-def currentVersionCode = (versionProps['VERSION_CODE'] ?: '19').toInteger()
-
-def isBuildingApk = gradle.startParameter.taskNames.any { task ->
-    def t = task.toLowerCase()
-    t.contains("assemble") || t.contains("package") || t.contains("bundle")
+if (!versionProps['VERSION_MAJOR'] || !versionProps['VERSION_CODE']) {
+    throw new GradleException('VERSION_MAJOR and VERSION_CODE are required in app/version.properties')
 }
-
-if (isBuildingApk && !rootProject.ext.has("hasVersionBumped")) {
-    rootProject.ext.hasVersionBumped = true
-    currentVersionCode += 1
-    versionProps['VERSION_CODE'] = currentVersionCode.toString()
-    versionProps.store(versionPropsFile.newWriter(), null)
+def versionMajor = versionProps['VERSION_MAJOR'].toInteger()
+def currentVersionCode = versionProps['VERSION_CODE'].toInteger()
+if (versionMajor < 1 || currentVersionCode < 1) {
+    throw new GradleException('VERSION_MAJOR and VERSION_CODE must be positive integers')
 }
+def currentVersionName = String.format('%d.%04d', versionMajor, currentVersionCode)
 
 android {
     namespace 'com.example.loopmuse'
@@ -40,7 +34,7 @@ android {
         minSdk 24
         targetSdk 35
         versionCode currentVersionCode
-        versionName "v1.10.22"
+        versionName currentVersionName
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -80,9 +74,7 @@ android {
 
     applicationVariants.all { variant ->
         variant.outputs.all {
-            def date = new Date().format('yyMMdd')
-            def codeFormatted = String.format('%04d', variant.versionCode)
-            outputFileName = "loopmuse-${date}-${codeFormatted}.apk"
+            outputFileName = "loopmuse-${variant.versionName}-c${variant.versionCode}-${variant.buildType.name}.apk"
         }
     }
 }
