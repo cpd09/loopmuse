@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [SongMetaEntity::class, AlarmEntity::class], version = 4, exportSchema = false)
+@Database(entities = [SongMetaEntity::class, AlarmEntity::class], version = 5, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun songMetaDao(): SongMetaDao
     abstract fun alarmDao(): AlarmDao
@@ -33,6 +33,12 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `alarms` ADD COLUMN `endPositionMs` INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
@@ -43,7 +49,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "loopmuse_database"
                 )
-                .addMigrations(migrationFrom(1), migrationFrom(2), migrationFrom(3))
+                .addMigrations(migrationFrom(1), migrationFrom(2), migrationFrom(3), MIGRATION_4_5)
                 .build()
                 INSTANCE = instance
                 instance

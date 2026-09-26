@@ -4,11 +4,17 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.SystemClock
 import com.example.loopmuse.data.db.AlarmEntity
 import java.util.Calendar
 
 class AlarmScheduler(private val context: Context) {
     private val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+
+    companion object {
+        const val ACTION_SNOOZE_TRIGGER = "com.example.loopmuse.action.SNOOZE_TRIGGER"
+        const val SNOOZE_DELAY_MS = 5 * 60 * 1000L
+    }
 
     fun scheduleAlarm(alarm: AlarmEntity) {
         val intent = Intent(context, AlarmReceiver::class.java).apply {
@@ -16,6 +22,7 @@ class AlarmScheduler(private val context: Context) {
             putExtra("SONG_FINGERPRINT", alarm.songFingerprintId)
             putExtra("SONG_PATH", alarm.songPath)
             putExtra("START_POSITION", alarm.startPositionMs)
+            putExtra("END_POSITION", alarm.endPositionMs)
             putExtra("TARGET_VOLUME", alarm.targetVolume)
             putExtra("USE_FADE_IN", alarm.useFadeIn)
         }
@@ -50,15 +57,46 @@ class AlarmScheduler(private val context: Context) {
         )
     }
 
-    @Suppress("unused")
     fun cancelAlarm(alarmId: Int) {
         val intent = Intent(context, AlarmReceiver::class.java)
         val pendingIntent = PendingIntent.getBroadcast(
             context,
             alarmId,
             intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
         )
-        alarmManager.cancel(pendingIntent)
+        pendingIntent?.let {
+            alarmManager.cancel(it)
+            it.cancel()
+        }
+        cancelSnooze(alarmId)
     }
+
+    fun scheduleSnooze(alarmId: Int) {
+        alarmManager.setExactAndAllowWhileIdle(
+            AlarmManager.ELAPSED_REALTIME_WAKEUP,
+            SystemClock.elapsedRealtime() + SNOOZE_DELAY_MS,
+            snoozePendingIntent(alarmId, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)!!
+        )
+    }
+
+    fun cancelSnooze(alarmId: Int) {
+        snoozePendingIntent(alarmId, PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE)?.let {
+            alarmManager.cancel(it)
+            it.cancel()
+        }
+    }
+
+    fun hasSnooze(alarmId: Int): Boolean =
+        snoozePendingIntent(alarmId, PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE) != null
+
+    private fun snoozePendingIntent(alarmId: Int, flags: Int): PendingIntent? = PendingIntent.getBroadcast(
+        context,
+        alarmId,
+        Intent(context, AlarmReceiver::class.java).apply {
+            action = ACTION_SNOOZE_TRIGGER
+            putExtra("ALARM_ID", alarmId)
+        },
+        flags
+    )
 }

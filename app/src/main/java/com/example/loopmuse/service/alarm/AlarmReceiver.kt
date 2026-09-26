@@ -19,34 +19,44 @@ class AlarmReceiver : BroadcastReceiver() {
         )
         wakeLock.acquire(10 * 60 * 1000L /*10 minutes*/)
 
-        val serviceIntent = Intent(context, AlarmPlaybackService::class.java).apply {
-            putExtras(intent)
-        }
-        
-        // Start Foreground Service for reliable playback
-        try {
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                context.startForegroundService(serviceIntent)
-            } else {
-                context.startService(serviceIntent)
-            }
-        } finally {
-            wakeLock.release()
-        }
-
         val alarmId = intent.getIntExtra("ALARM_ID", 0)
-        if (alarmId <= 0) return
+        val isSnooze = intent.action == AlarmScheduler.ACTION_SNOOZE_TRIGGER
+        if (alarmId <= 0) {
+            wakeLock.release()
+            return
+        }
         val pending = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val dao = AppDatabase.getDatabase(context).alarmDao()
-                dao.getAlarmById(alarmId)?.let { alarm ->
+                val alarm = dao.getAlarmById(alarmId) ?: return@launch
+                if (!alarm.isEnabled && !(isSnooze && alarm.isOneTime)) return@launch
+                // Read the saved row so an edit or deletion is respected even if a broadcast was queued.
+                val serviceIntent = Intent(context, AlarmPlaybackService::class.java).apply {
+                    putExtra("ALARM_ID", alarm.id)
+                    putExtra("ALARM_HOUR", alarm.hour)
+                    putExtra("ALARM_MINUTE", alarm.minute)
+                    putExtra("IS_SNOOZE", isSnooze)
+                    putExtra("SONG_TITLE", alarm.songTitle)
+                    putExtra("SONG_PATH", alarm.songPath)
+                    putExtra("START_POSITION", alarm.startPositionMs)
+                    putExtra("END_POSITION", alarm.endPositionMs)
+                    putExtra("TARGET_VOLUME", alarm.targetVolume)
+                    putExtra("USE_FADE_IN", alarm.useFadeIn)
+                }
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    context.startForegroundService(serviceIntent)
+                } else {
+                    context.startService(serviceIntent)
+                }
+                if (!isSnooze) {
                     if (alarm.isOneTime) dao.updateAlarmEnabled(alarmId, false)
-                    else if (alarm.isEnabled) AlarmScheduler(context).scheduleAlarm(alarm)
+                    else AlarmScheduler(context).scheduleAlarm(alarm)
                 }
             } catch (e: Exception) {
-                Log.w("LoopMuse", "Cannot update fired alarm $alarmId", e)
+                Log.w("LoopMuse", "Cannot start or update fired alarm $alarmId", e)
             } finally {
+                wakeLock.release()
                 pending.finish()
             }
         }

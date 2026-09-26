@@ -14,6 +14,21 @@ import com.example.loopmuse.ui.DataManagementDialog
 import java.io.File
 
 class MainActivity : ComponentActivity() {
+    companion object {
+        @Volatile var isResumed = false
+            private set
+    }
+
+    override fun onResume() {
+        super.onResume()
+        isResumed = true
+    }
+
+    override fun onPause() {
+        isResumed = false
+        super.onPause()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()

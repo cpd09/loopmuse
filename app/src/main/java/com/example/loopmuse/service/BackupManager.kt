@@ -366,7 +366,9 @@ class BackupManager(private val context: Context, private val database: AppDatab
         }
         val payload = gson.fromJson(envelope.payload, Payload::class.java)
         validateSongs(payload.songs)
-        require(payload.alarms.all { it.hour in 0..23 && it.minute in 0..59 && it.id > 0 && it.targetVolume in 0f..1f } &&
+        require(payload.alarms.all { it.hour in 0..23 && it.minute in 0..59 && it.id > 0 &&
+            it.targetVolume in 0f..1f && it.startPositionMs >= 0L &&
+            (it.endPositionMs == 0L || it.endPositionMs > it.startPositionMs) } &&
             payload.alarms.map { it.id }.toSet().size == payload.alarms.size) { "알람 정보가 잘못되었습니다." }
         require(payload.selectedItems.all { it.path.isNotBlank() } && payload.currentPlaylistId.isNotBlank()) { "음악 폴더 정보가 잘못되었습니다." }
         playlistObject(payload.playlistsJson)

@@ -10,12 +10,13 @@ data class AlarmEntity(
     val hour: Int,
     val minute: Int,
     val isEnabled: Boolean = true,
-    val repeatDays: String = "", // e.g., "1,2,3,4,5" for Mon-Fri
+    val repeatDays: String = "", // Calendar day numbers: 1=Sun, 2=Mon, ..., 7=Sat
     val isOneTime: Boolean = false,
     val songFingerprintId: String? = null,
     val songTitle: String? = null,
     val songPath: String? = null,
     val startPositionMs: Long = 0L,
+    val endPositionMs: Long = 0L, // 0 means play the whole song
     val targetVolume: Float = 0.5f, // 0.0 to 1.0
     val useFadeIn: Boolean = true
 )

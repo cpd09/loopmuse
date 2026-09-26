@@ -46,11 +46,9 @@ jobs:
         run: ./gradlew assembleDebug
 
       - name: Verify APK version and filename
-        id: verify
         run: |
           python3 - <<'PY'
           import json
-          import os
           from pathlib import Path
 
           values = dict(
@@ -68,15 +66,6 @@ jobs:
               raise SystemExit(f'APK metadata does not match {name} (code {code}): {element}')
           if not (output_dir / expected_file).is_file():
               raise SystemExit(f'APK is missing: {expected_file}')
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-              output.write(f'artifact_name={expected_file.removesuffix(".apk")}\n')
           print(f'Verified {expected_file}: versionName={name}, versionCode={code}')
           PY
           git diff --exit-code -- app/version.properties
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.verify.outputs.artifact_name }}
-          path: app/build/outputs/apk/debug/loopmuse-*.apk
-          if-no-files-found: error

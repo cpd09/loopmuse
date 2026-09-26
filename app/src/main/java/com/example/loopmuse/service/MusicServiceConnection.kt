@@ -167,8 +167,11 @@ class MusicServiceConnection(private val context: Context) {
     }
 
     // --- Alarm ---
-    suspend fun scheduleAlarm(alarm: com.example.loopmuse.data.db.AlarmEntity) {
+    suspend fun scheduleAlarm(alarm: com.example.loopmuse.data.db.AlarmEntity): Int =
         (musicService ?: error("음악 서비스 연결 중입니다.")).saveAlarm(alarm)
+
+    suspend fun deleteAlarm(alarm: com.example.loopmuse.data.db.AlarmEntity) {
+        (musicService ?: error("음악 서비스 연결 중입니다.")).deleteAlarm(alarm)
     }
 
     fun selectAll() { musicService?.selectAll() }

@@ -255,9 +255,31 @@ class MusicPlaybackService : Service() {
 
     fun getSelectedItems(): List<SelectionItem> = selectedItems
 
-    suspend fun saveAlarm(alarm: com.example.loopmuse.data.db.AlarmEntity) {
-        val id = withContext(Dispatchers.IO) { appDatabase.alarmDao().insertAlarm(alarm).toInt() }
-        com.example.loopmuse.service.alarm.AlarmScheduler(this).scheduleAlarm(alarm.copy(id = id))
+    suspend fun saveAlarm(alarm: com.example.loopmuse.data.db.AlarmEntity): Int {
+        val dao = appDatabase.alarmDao()
+        val previous = if (alarm.id == 0) null else withContext(Dispatchers.IO) { dao.getAlarmById(alarm.id) }
+        val id = withContext(Dispatchers.IO) {
+            if (alarm.id == 0) dao.insertAlarm(alarm).toInt()
+            else { dao.updateAlarm(alarm); alarm.id }
+        }
+        val scheduler = com.example.loopmuse.service.alarm.AlarmScheduler(this)
+        try {
+            if (alarm.isEnabled) scheduler.scheduleAlarm(alarm.copy(id = id))
+            else scheduler.cancelAlarm(id)
+        } catch (e: Exception) {
+            withContext(Dispatchers.IO) {
+                if (previous == null) dao.deleteAlarm(alarm.copy(id = id))
+                else dao.updateAlarm(previous)
+            }
+            if (previous?.isEnabled == true) runCatching { scheduler.scheduleAlarm(previous) }
+            throw e
+        }
+        return id
+    }
+
+    suspend fun deleteAlarm(alarm: com.example.loopmuse.data.db.AlarmEntity) {
+        com.example.loopmuse.service.alarm.AlarmScheduler(this).cancelAlarm(alarm.id)
+        withContext(Dispatchers.IO) { appDatabase.alarmDao().deleteAlarm(alarm) }
     }
 
     suspend fun restoreUserData(uri: android.net.Uri, mode: RestoreMode) {
