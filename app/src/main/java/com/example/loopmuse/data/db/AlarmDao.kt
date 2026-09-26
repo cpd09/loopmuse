@@ -13,6 +13,12 @@ interface AlarmDao {
     @Query("SELECT * FROM alarms ORDER BY hour ASC, minute ASC")
     fun getAllAlarms(): Flow<List<AlarmEntity>>
 
+    @Query("SELECT * FROM alarms ORDER BY hour ASC, minute ASC")
+    suspend fun getAllAlarmsOnce(): List<AlarmEntity>
+
+    @Query("SELECT * FROM alarms WHERE id = :alarmId LIMIT 1")
+    suspend fun getAlarmById(alarmId: Int): AlarmEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAlarm(alarm: AlarmEntity): Long
 
@@ -24,4 +30,7 @@ interface AlarmDao {
 
     @Query("UPDATE alarms SET isEnabled = :isEnabled WHERE id = :alarmId")
     suspend fun updateAlarmEnabled(alarmId: Int, isEnabled: Boolean)
+
+    @Query("DELETE FROM alarms")
+    suspend fun deleteAll()
 }

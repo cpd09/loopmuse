@@ -27,15 +27,18 @@ class AlarmScheduler(private val context: Context) {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val repeatDays = alarm.repeatDays.split(',').mapNotNull { it.trim().toIntOrNull() }
+            .filter { it in Calendar.SUNDAY..Calendar.SATURDAY }.toSet()
         val calendar = Calendar.getInstance().apply {
             set(Calendar.HOUR_OF_DAY, alarm.hour)
             set(Calendar.MINUTE, alarm.minute)
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)
-            
-            // If the time has already passed today, set for tomorrow
             if (timeInMillis <= System.currentTimeMillis()) {
                 add(Calendar.DAY_OF_YEAR, 1)
+            }
+            if (!alarm.isOneTime && repeatDays.isNotEmpty()) {
+                while (get(Calendar.DAY_OF_WEEK) !in repeatDays) add(Calendar.DAY_OF_YEAR, 1)
             }
         }
 

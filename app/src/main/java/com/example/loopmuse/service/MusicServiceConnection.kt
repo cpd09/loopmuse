@@ -11,12 +11,17 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 class MusicServiceConnection(private val context: Context) {
     
     private var musicService: MusicPlaybackService? = null
     private var isBound = false
+    private var serviceCollectionScope: CoroutineScope? = null
     
     private val _isConnected = MutableStateFlow(value = false)
     val isConnected: StateFlow<Boolean> = _isConnected
@@ -74,7 +79,8 @@ class MusicServiceConnection(private val context: Context) {
             _isConnected.value = true
             
             musicService?.let { s ->
-                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).apply {
+                serviceCollectionScope?.cancel()
+                CoroutineScope(Dispatchers.Main.immediate + SupervisorJob()).also { serviceCollectionScope = it }.apply {
                     launch { s.isPlaying.collect { _isPlaying.value = it } }
                     launch { s.currentTrack.collect { _currentTrack.value = it } }
                     launch { s.playlistState.collect { _playlistState.value = it } }
@@ -95,23 +101,28 @@ class MusicServiceConnection(private val context: Context) {
         }
         
         override fun onServiceDisconnected(name: ComponentName?) {
+            serviceCollectionScope?.cancel()
+            serviceCollectionScope = null
             musicService = null
-            isBound = false
             _isConnected.value = false
         }
     }
     
     fun bindService() {
+        if (isBound) return
         val intent = Intent(context, MusicPlaybackService::class.java)
-        context.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        isBound = context.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
         context.startService(intent)
     }
     
     fun unbindService() {
         if (isBound) {
+            serviceCollectionScope?.cancel()
+            serviceCollectionScope = null
             context.unbindService(serviceConnection)
             isBound = false
             _isConnected.value = false
+            musicService = null
         }
     }
     
@@ -156,16 +167,21 @@ class MusicServiceConnection(private val context: Context) {
     }
 
     // --- Alarm ---
-    fun scheduleAlarm(alarm: com.example.loopmuse.data.db.AlarmEntity) {
-        val scheduler = com.example.loopmuse.service.alarm.AlarmScheduler(context)
-        scheduler.scheduleAlarm(alarm)
+    suspend fun scheduleAlarm(alarm: com.example.loopmuse.data.db.AlarmEntity) {
+        (musicService ?: error("음악 서비스 연결 중입니다.")).saveAlarm(alarm)
     }
 
     fun selectAll() { musicService?.selectAll() }
     fun clearSelection() { musicService?.clearSelection() }
+    fun onPlaylistSongClick(id: String) { musicService?.onPlaylistSongClick(id) }
     fun playTrackById(id: String) { musicService?.playTrackById(id) }
 
     // --- Backup & Restore ---
-    suspend fun createBackup(treeUri: android.net.Uri): Boolean = musicService?.backupManager?.createBackup(treeUri) ?: false
-    suspend fun restoreDatabase(fileUri: android.net.Uri): Boolean = musicService?.backupManager?.restoreDatabase(fileUri) ?: false
+    suspend fun restoreUserData(fileUri: android.net.Uri, mode: RestoreMode) {
+        (musicService ?: error("음악 서비스 연결 중입니다.")).restoreUserData(fileUri, mode)
+    }
+
+    suspend fun startFreshUserData() {
+        (musicService ?: error("음악 서비스 연결 중입니다.")).startFreshUserData()
+    }
 }

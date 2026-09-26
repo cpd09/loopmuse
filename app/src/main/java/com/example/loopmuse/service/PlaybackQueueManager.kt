@@ -131,6 +131,13 @@ class PlaybackQueueManager(context: Context) {
             history = finalHistory,
             historyIndex = finalHistoryIndex
         )
+        if (id == currentPlaylistId) {
+            selectedIds.retainAll(newQueue.toSet())
+            if (selectedIds.isEmpty()) {
+                isSelectionMode = false
+                isSelectionPlayback = false
+            }
+        }
     }
 
     private fun getComparator(criteria: SortCriteria, order: SortOrder): Comparator<MusicFile> {
@@ -226,6 +233,7 @@ class PlaybackQueueManager(context: Context) {
     
     fun switchPlaylist(id: String) {
         if (playlists.containsKey(id)) {
+            if (currentPlaylistId != id) clearSelection()
             currentPlaylistId = id
             saveState()
         }
@@ -248,13 +256,17 @@ class PlaybackQueueManager(context: Context) {
     fun deletePlaylist(id: String) {
         if (id != "ALL") {
             playlists.remove(id)
-            if (currentPlaylistId == id) currentPlaylistId = "ALL"
+            if (currentPlaylistId == id) {
+                clearSelection()
+                currentPlaylistId = "ALL"
+            }
             saveState()
         }
     }
 
     fun setTemporaryPlaylist(name: String, ids: List<String>) {
         val id = "TEMP"
+        clearSelection()
         playlists[id] = PlaylistState(id, name, PlaylistType.TEMPORARY, queue = ids, originalQueue = ids)
         currentPlaylistId = id
         updatePlaylistQueue(id)
@@ -323,7 +335,7 @@ class PlaybackQueueManager(context: Context) {
         if (state.isSingleRepeat && !isManual) return getCurrentTrack()
 
         // --- LEVEL 2: Selection Playback ---
-        if (isSelectionPlayback && selectedIds.isNotEmpty()) {
+        if (isSelectionPlayback) {
             val selectedList = state.queue.filter { selectedIds.contains(it) }
             if (selectedList.isEmpty()) { isSelectionPlayback = false }
             else {
@@ -388,12 +400,16 @@ class PlaybackQueueManager(context: Context) {
 
     fun getPreviousTrack(): MusicFile? {
         val state = playlists[currentPlaylistId] ?: return null
-        if (isSelectionPlayback && selectedIds.isNotEmpty()) {
+        if (isSelectionPlayback) {
             val selectedList = state.queue.filter { selectedIds.contains(it) }
-            val currentId = state.queue.getOrNull(state.currentIndex)
-            val selIdx = selectedList.indexOf(currentId)
-            val prevId = selectedList[if (selIdx <= 0) selectedList.size - 1 else selIdx - 1]
-            return updateCurrentTrackById(prevId)
+            if (selectedList.isEmpty()) {
+                isSelectionPlayback = false
+            } else {
+                val currentId = state.queue.getOrNull(state.currentIndex)
+                val selIdx = selectedList.indexOf(currentId)
+                val prevId = selectedList[if (selIdx <= 0) selectedList.size - 1 else selIdx - 1]
+                return updateCurrentTrackById(prevId)
+            }
         }
         if (state.historyIndex > 0) {
             val prevIndex = state.historyIndex - 1
@@ -436,15 +452,22 @@ class PlaybackQueueManager(context: Context) {
     fun playTrackById(id: String): MusicFile? = updateCurrentTrackById(id)
 
     fun toggleSelectionMode() {
-        isSelectionMode = !isSelectionMode
-        if (!isSelectionMode) {
+        if (isSelectionMode) {
             clearSelection()
+        } else {
+            selectedIds.clear()
+            isSelectionPlayback = false
+            isSelectionMode = true
         }
     }
 
     fun toggleSelection(id: String) {
+        if (id !in (playlists[currentPlaylistId]?.queue ?: emptyList())) return
         if (selectedIds.contains(id)) selectedIds.remove(id) else selectedIds.add(id)
-        if (selectedIds.isEmpty()) { isSelectionMode = false; isSelectionPlayback = false }
+        if (selectedIds.isEmpty()) {
+            isSelectionMode = false
+            isSelectionPlayback = false
+        }
     }
 
     fun selectAll() {
@@ -452,6 +475,7 @@ class PlaybackQueueManager(context: Context) {
         selectedIds.clear()
         selectedIds.addAll(queue)
         isSelectionMode = true
+        isSelectionPlayback = false
     }
 
     fun clearSelection() { selectedIds.clear(); isSelectionMode = false; isSelectionPlayback = false }

@@ -17,6 +17,8 @@ import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.*
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -37,7 +39,6 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -45,7 +46,6 @@ import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalTextToolbar
-import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.TextToolbar
 import androidx.compose.ui.platform.TextToolbarStatus
 import androidx.compose.ui.text.font.FontWeight
@@ -104,6 +104,15 @@ fun HomeScreen() {
     
     val musicScanner = remember { MusicScanner(context) }
     val musicServiceConnection = remember { MusicServiceConnection(context) }
+    val backupPrefs = remember(context) { context.getSharedPreferences("backup_prefs", android.content.Context.MODE_PRIVATE) }
+    var backupProblem by remember { mutableStateOf(backupPrefs.getString("last_error", null)) }
+    DisposableEffect(backupPrefs) {
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == "last_error") backupProblem = backupPrefs.getString("last_error", null)
+        }
+        backupPrefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { backupPrefs.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
     
     val storagePermissionState = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         rememberPermissionState(Manifest.permission.READ_MEDIA_AUDIO)
@@ -120,25 +129,7 @@ fun HomeScreen() {
     var showEditPlaylistDialog by remember { mutableStateOf(value = false) }
     var showLoungeScreen by remember { mutableStateOf(value = false) }
     
-    var showBackupResult by remember { mutableStateOf<String?>(null) }
-    
-    val backupLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        uri?.let {
-            coroutineScope.launch {
-                val success = musicServiceConnection.createBackup(it)
-                showBackupResult = if (success) "백업 성공: loopmuse_backup.json" else "백업 실패"
-            }
-        }
-    }
-    
-    val restoreLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri?.let {
-            coroutineScope.launch {
-                val success = musicServiceConnection.restoreDatabase(it)
-                showBackupResult = if (success) "데이터 복원(병합) 성공!" else "복원 실패"
-            }
-        }
-    }
+    var showSettingsScreen by remember { mutableStateOf(false) }
     
     var searchType by remember { mutableStateOf("전체") } 
     var editPlaylistName by remember { mutableStateOf("") }
@@ -177,8 +168,14 @@ fun HomeScreen() {
     
     LaunchedEffect(Unit) { musicServiceConnection.bindService() }
     DisposableEffect(Unit) { onDispose { musicServiceConnection.unbindService() } }
-    
-    if (showLoungeScreen) {
+
+    if (showSettingsScreen) {
+        SettingsScreen(
+            onBack = { showSettingsScreen = false },
+            onRestore = { uri, mode -> musicServiceConnection.restoreUserData(uri, mode) },
+            onFresh = { musicServiceConnection.startFreshUserData() }
+        )
+    } else if (showLoungeScreen) {
         CommunityLoungeScreen(
             onBackPressed = { showLoungeScreen = false }
         )
@@ -289,42 +286,10 @@ fun HomeScreen() {
                             )
                         }
                         
-                        var showSettingsMenu by remember { mutableStateOf(false) }
-                        
-                        Box {
-                            IconButton(onClick = { showSettingsMenu = true }, modifier = Modifier.size(32.dp)) { 
-                                Icon(Icons.Default.Settings, contentDescription = "설정", modifier = Modifier.size(20.dp)) 
-                            }
-                            DropdownMenu(expanded = showSettingsMenu, onDismissRequest = { showSettingsMenu = false }) {
-                                DropdownMenuItem(
-                                    text = { Text("데이터 백업 (폴더 선택)") }, 
-                                    onClick = { 
-                                        showSettingsMenu = false 
-                                        backupLauncher.launch(null)
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("데이터 복원 (파일 선택)") }, 
-                                    onClick = { 
-                                        showSettingsMenu = false 
-                                        restoreLauncher.launch(arrayOf("application/json", "*/*"))
-                                    }
-                                )
-                            }
-                        }
-                        
-                        // Simple Snackbar alternative for results
-                        showBackupResult?.let { msg ->
-                            LaunchedEffect(msg) {
-                                delay(3.seconds)
-                                showBackupResult = null
-                            }
-                            AlertDialog(
-                                onDismissRequest = { showBackupResult = null },
-                                title = { Text("알림") },
-                                text = { Text(msg) },
-                                confirmButton = { TextButton(onClick = { showBackupResult = null }) { Text("확인") } }
-                            )
+                        IconButton(onClick = { showSettingsScreen = true }, modifier = Modifier.size(32.dp)) {
+                            Icon(Icons.Default.Settings, contentDescription = "설정",
+                                tint = if (backupProblem != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.size(20.dp))
                         }
                     }
                     Spacer(modifier = Modifier.height(12.dp))
@@ -347,11 +312,12 @@ fun HomeScreen() {
                         IconButton(onClick = { musicServiceConnection.toggleSelectionMode() }, modifier = Modifier.size(32.dp)) {
                             Icon(Icons.Default.TouchApp, contentDescription = "선택 모드", tint = if (isSelectionMode) MaterialTheme.colorScheme.primary else Color.Gray, modifier = Modifier.size(26.dp))
                         }
-                        IconButton(onClick = { 
-                            if (selectedIds.size == allSongsInQueue.size && allSongsInQueue.isNotEmpty()) musicServiceConnection.clearSelection() 
-                            else musicServiceConnection.selectAll() 
+                        val allQueueSelected = allSongsInQueue.isNotEmpty() && allSongsInQueue.all { selectedIds.contains(it.id) }
+                        IconButton(onClick = {
+                            if (allQueueSelected) musicServiceConnection.clearSelection()
+                            else musicServiceConnection.selectAll()
                         }, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Default.SelectAll, contentDescription = "전체 선택/해제", tint = if (selectedIds.size == allSongsInQueue.size && allSongsInQueue.isNotEmpty()) MaterialTheme.colorScheme.primary else Color.Gray, modifier = Modifier.size(26.dp))
+                            Icon(Icons.Default.SelectAll, contentDescription = "전체 선택/해제", tint = if (allQueueSelected) MaterialTheme.colorScheme.primary else Color.Gray, modifier = Modifier.size(26.dp))
                         }
                         IconButton(enabled = selectedIds.size >= 2, onClick = { 
                             editPlaylistName = ""
@@ -370,8 +336,7 @@ fun HomeScreen() {
                             songs = allSongsInQueue, currentTrack = currentTrack, playlistState = playlistState,
                             playedSongIds = playedSongIds, selectedIds = selectedIds, likedFingerprints = likedFingerprints,
                             onSongClick = { song ->
-                                if (isSelectionMode) musicServiceConnection.toggleSelection(song.id)
-                                else musicServiceConnection.playTrackById(song.id)
+                                musicServiceConnection.onPlaylistSongClick(song.id)
                             },
                             onLikeClick = { fingerprintId ->
                                 musicServiceConnection.toggleLike(fingerprintId)
@@ -379,7 +344,8 @@ fun HomeScreen() {
                             onEditTagsClick = { song ->
                                 songForTagEdit = song
                             },
-                            isSelectionMode = isSelectionMode
+                            isSelectionMode = isSelectionMode,
+                            isSelectionPlayback = isSelectionPlayback
                         )
                     }
                     Spacer(modifier = Modifier.height(4.dp))
@@ -893,6 +859,8 @@ fun AlarmSettingDialog(
     connection: MusicServiceConnection,
     onDismiss: () -> Unit
 ) {
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var hour by remember { mutableIntStateOf(7) }
     var minute by remember { mutableIntStateOf(0) }
     var selectedDays by remember { mutableStateOf(setOf<Int>()) } // 1:Sun, 2:Mon...7:Sat
@@ -999,8 +967,14 @@ fun AlarmSettingDialog(
                             targetVolume = targetVolume,
                             useFadeIn = useFadeIn
                         )
-                        connection.scheduleAlarm(alarm)
-                        onDismiss()
+                        scope.launch {
+                            try {
+                                connection.scheduleAlarm(alarm)
+                                onDismiss()
+                            } catch (e: Exception) {
+                                Toast.makeText(context, e.message ?: "알람 저장에 실패했습니다.", Toast.LENGTH_LONG).show()
+                            }
+                        }
                     }, shape = RoundedCornerShape(12.dp)) {
                         Text("알람 저장", fontWeight = FontWeight.Bold)
                     }
@@ -1280,24 +1254,25 @@ fun NowPlayingCardExpanded(
     }
 }
 
-@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun PlaylistView(
     songs: List<MusicFile>, currentTrack: MusicFile?, playlistState: PlaylistState?,
     playedSongIds: Set<String>, selectedIds: Set<String>, likedFingerprints: Set<String>,
     onSongClick: (MusicFile) -> Unit, onLikeClick: (String) -> Unit, onEditTagsClick: (MusicFile) -> Unit,
-    isSelectionMode: Boolean
+    isSelectionMode: Boolean,
+    isSelectionPlayback: Boolean
 ) {
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     var scrollTargetIndex by remember { mutableIntStateOf(-1) }
     var trackHeightPx by remember { mutableIntStateOf(0) }
-    val viewConf = LocalViewConfiguration.current
     
-    LaunchedEffect(currentTrack?.id) {
-        val index = songs.indexOfFirst { it.id == currentTrack?.id }
-        if (index != -1) {
-            listState.animateScrollToItem((index - 2).coerceAtLeast(0))
+    LaunchedEffect(currentTrack?.id, isSelectionMode, isSelectionPlayback) {
+        if (!isSelectionMode || isSelectionPlayback) {
+            val index = songs.indexOfFirst { it.id == currentTrack?.id }
+            if (index != -1) {
+                listState.animateScrollToItem((index - 2).coerceAtLeast(0))
+            }
         }
     }
 
@@ -1337,16 +1312,17 @@ fun PlaylistView(
                 val isLiked = likedFingerprints.contains(song.fingerprintId)
                 val isSingleRepeat = playlistState?.isSingleRepeat ?: false
                 
-                val alpha = if (isPlayed && !isCurrent) 0.4f else 1f
+                val alpha = if (isPlayed && !isCurrent && !(isSelectionMode && isSelected)) 0.4f else 1f
                 val color = when {
+                    isSelectionMode && isSelected -> Color.Blue
                     isCurrent && isSingleRepeat -> Color.Red
                     isCurrent -> MaterialTheme.colorScheme.primary
-                    isSelected -> Color.Blue
                     else -> MaterialTheme.colorScheme.onSurface
                 }
                 val weight = if (isSelected || (isCurrent && isSingleRepeat)) FontWeight.Black else FontWeight.Normal
 
-                var isBeingPressed by remember { mutableStateOf(false) }
+                val interactionSource = remember(song.id) { MutableInteractionSource() }
+                val isBeingPressed by interactionSource.collectIsPressedAsState()
                 val animatedBgColor by animateColorAsState(
                     targetValue = if (isBeingPressed) Color.LightGray.copy(alpha = 0.3f) else Color.Transparent,
                     animationSpec = tween(durationMillis = 200)
@@ -1355,44 +1331,11 @@ fun PlaylistView(
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(animatedBgColor)
-                        .pointerInput(song.id) {
-                            awaitPointerEventScope {
-                                val down = awaitFirstDown()
-                                isBeingPressed = true
-                                val startPos = down.position
-                                var isCancelled = false
-                                
-                                while (true) {
-                                    val event = awaitPointerEvent()
-                                    val change = event.changes.first()
-                                    val currentPos = change.position
-                                    
-                                    // Distance check for cancellation (Scroll priority)
-                                    if (kotlin.math.abs(currentPos.y - startPos.y) > viewConf.touchSlop ||
-                                        kotlin.math.abs(currentPos.x - startPos.x) > viewConf.touchSlop) {
-                                        isCancelled = true
-                                        isBeingPressed = false
-                                    }
-                                    
-                                    if (event.type == PointerEventType.Release) {
-                                        if (!isCancelled) {
-                                            onSongClick(song)
-                                        }
-                                        isBeingPressed = false
-                                        break
-                                    }
-                                    
-                                    if (isCancelled) {
-                                        break
-                                    }
-                                }
-                            }
-                        },
+                        .clickable(interactionSource = interactionSource, indication = null) { onSongClick(song) },
                     color = if (isCurrent) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
                     shape = MaterialTheme.shapes.medium
                 ) {
-                    Row(modifier = Modifier.padding(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(modifier = Modifier.background(animatedBgColor).padding(6.dp), verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = { onLikeClick(song.fingerprintId) }, modifier = Modifier.size(24.dp)) {
                             Icon(
                                 imageVector = Icons.Default.MusicNote, 

@@ -20,6 +20,9 @@ interface SongMetaDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdate(meta: SongMetaEntity)
 
-    @Query("UPDATE song_metadata SET isLiked = :isLiked WHERE fingerprintId = :fingerprintId")
-    suspend fun updateLikeStatus(fingerprintId: String, isLiked: Boolean)
+    @Query("UPDATE song_metadata SET isLiked = :isLiked, lastUpdated = :updatedAt WHERE fingerprintId = :fingerprintId")
+    suspend fun updateLikeStatus(fingerprintId: String, isLiked: Boolean, updatedAt: Long)
+
+    @Query("DELETE FROM song_metadata")
+    suspend fun deleteAll()
 }

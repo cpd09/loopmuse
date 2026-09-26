@@ -42,6 +42,7 @@ class MusicPlaybackService : Service() {
     
     private var cachedAllSongs: List<MusicFile> = emptyList()
     private var lastScanTime: Long = 0
+    private var scanGeneration: Long = 0
     private val scanCacheTimeout = 30000L
     
     private lateinit var queueManager: PlaybackQueueManager
@@ -100,6 +101,7 @@ class MusicPlaybackService : Service() {
     // Room DB & Backup
     private lateinit var appDatabase: com.example.loopmuse.data.db.AppDatabase
     lateinit var backupManager: BackupManager
+    private var isImportingData = false
     
     inner class LocalBinder : Binder() {
         fun getService(): MusicPlaybackService = this@MusicPlaybackService
@@ -111,10 +113,11 @@ class MusicPlaybackService : Service() {
         musicScanner = MusicScanner(this)
         notificationManager = NotificationManagerCompat.from(this)
         appDatabase = com.example.loopmuse.data.db.AppDatabase.getDatabase(this)
-        backupManager = BackupManager(this, appDatabase.songMetaDao())
+        backupManager = BackupManager(this, appDatabase)
         
         loadSelectedItems()
         syncWithQueueManager()
+        backupManager.startAutoBackup(serviceScope)
         createNotificationChannel()
         initializeMediaSession()
         startPositionUpdates()
@@ -124,8 +127,10 @@ class MusicPlaybackService : Service() {
             appDatabase.songMetaDao().getLikedSongs().collect { likedEntities ->
                 val set = likedEntities.map { it.fingerprintId }.toSet()
                 _likedFingerprints.value = set
-                queueManager.setLikedFingerprints(set)
-                syncWithQueueManager()
+                if (!isImportingData) {
+                    queueManager.setLikedFingerprints(set)
+                    syncWithQueueManager()
+                }
             }
         }
 
@@ -135,6 +140,13 @@ class MusicPlaybackService : Service() {
     }
 
     private fun syncWithQueueManager() {
+        val activeSongs = queueManager.getActiveQueueSongs()
+        currentSong?.let { song ->
+            if (activeSongs.none { it.id == song.id }) {
+                stopCurrentSong()
+                queueManager.isSelectionPlayback = false
+            }
+        }
         _playlistState.value = queueManager.getCurrentPlaylist()
         _allPlaylists.value = queueManager.getAllPlaylists()
         _isSelectionMode.value = queueManager.isSelectionMode
@@ -143,8 +155,14 @@ class MusicPlaybackService : Service() {
         // but we could if we wanted it persisted.
         _selectedIds.value = queueManager.selectedIds.toSet()
         _playedSongIds.value = queueManager.getPlayedSongIds()
-        _allSongsInQueue.value = queueManager.getActiveQueueSongs()
-        _currentTrack.value = queueManager.getCurrentTrack()
+        _allSongsInQueue.value = activeSongs
+        _currentTrack.value = if (queueManager.isSelectionMode && !queueManager.isSelectionPlayback && currentSong == null) {
+            val selected = queueManager.selectedIds
+            activeSongs.firstOrNull { it.id in selected }
+                ?: queueManager.getCurrentTrack()
+        } else {
+            queueManager.getCurrentTrack()
+        }
     }
 
     private fun startPositionUpdates() {
@@ -193,6 +211,7 @@ class MusicPlaybackService : Service() {
     
     override fun onDestroy() {
         super.onDestroy()
+        backupManager.stopAutoBackup()
         stopCurrentSong()
         mediaSession.release()
         serviceScope.cancel()
@@ -226,8 +245,8 @@ class MusicPlaybackService : Service() {
         selectedItems = items
         saveSelectedItems()
         stopCurrentSong()
-        queueManager.resetToDefault()
-        // Ensure selection mode is cleared when selecting new folders
+        // A restored playlist must survive reselecting its music folder.
+        queueManager.switchPlaylist("ALL")
         queueManager.clearSelection() 
         syncWithQueueManager()
         invalidateCache()
@@ -236,30 +255,76 @@ class MusicPlaybackService : Service() {
 
     fun getSelectedItems(): List<SelectionItem> = selectedItems
 
+    suspend fun saveAlarm(alarm: com.example.loopmuse.data.db.AlarmEntity) {
+        val id = withContext(Dispatchers.IO) { appDatabase.alarmDao().insertAlarm(alarm).toInt() }
+        com.example.loopmuse.service.alarm.AlarmScheduler(this).scheduleAlarm(alarm.copy(id = id))
+    }
+
+    suspend fun restoreUserData(uri: android.net.Uri, mode: RestoreMode) {
+        isImportingData = true
+        backupManager.stopAutoBackup()
+        invalidateCache()
+        stopCurrentSong()
+        try {
+            backupManager.restore(uri, mode)
+            reloadUserData()
+        } finally {
+            isImportingData = false
+            backupManager.startAutoBackup(serviceScope)
+        }
+    }
+
+    suspend fun startFreshUserData() {
+        isImportingData = true
+        backupManager.stopAutoBackup()
+        invalidateCache()
+        stopCurrentSong()
+        try {
+            backupManager.startFresh()
+            reloadUserData()
+        } finally {
+            isImportingData = false
+            backupManager.startAutoBackup(serviceScope)
+        }
+    }
+
+    private fun reloadUserData() {
+        stopCurrentSong()
+        selectedItems = emptyList()
+        loadSelectedItems()
+        queueManager = PlaybackQueueManager(this)
+        queueManager.setLikedFingerprints(_likedFingerprints.value)
+        invalidateCache()
+        syncWithQueueManager()
+        updateSongCounts()
+    }
+
     private fun invalidateCache() {
+        scanGeneration++
         cachedAllSongs = emptyList()
         lastScanTime = 0
     }
     
-    private suspend fun getCachedOrScanSongs(): List<MusicFile> {
+    private suspend fun getCachedOrScanSongs(): List<MusicFile>? {
         val currentTime = System.currentTimeMillis()
         return if ((cachedAllSongs.isNotEmpty()) && ((currentTime - lastScanTime) < scanCacheTimeout)) {
             cachedAllSongs
         } else {
-            withContext(Dispatchers.IO) {
-                val songs = musicScanner.scanMusicFiles(selectedItems)
-                cachedAllSongs = songs
-                queueManager.setAllSongs(songs)
-                lastScanTime = currentTime
-                songs
-            }
+            val generation = scanGeneration
+            val itemsToScan = selectedItems.toList()
+            val songs = musicScanner.scanMusicFiles(itemsToScan)
+            if (generation != scanGeneration) return null
+            cachedAllSongs = songs
+            queueManager.setAllSongs(songs)
+            lastScanTime = System.currentTimeMillis()
+            songs
         }
     }
     
     private fun updateSongCounts() {
         serviceScope.launch {
             try {
-                val songs = getCachedOrScanSongs()
+                val songs = getCachedOrScanSongs() ?: return@launch
                 _songCounts.value = "${songs.size}곡"
                 syncWithQueueManager()
             } catch (_: Exception) {
@@ -285,7 +350,12 @@ class MusicPlaybackService : Service() {
         }
     }
 
-    fun switchPlaylist(id: String) { stopCurrentSong(); queueManager.switchPlaylist(id); syncWithQueueManager() }
+    fun switchPlaylist(id: String) {
+        if (queueManager.getCurrentPlaylist()?.id == id || queueManager.getAllPlaylists().none { it.id == id }) return
+        stopCurrentSong()
+        queueManager.switchPlaylist(id)
+        syncWithQueueManager()
+    }
     fun addCustomPlaylist(name: String, ids: List<String>) { queueManager.addCustomPlaylist(name, ids); syncWithQueueManager() }
     fun updateCustomPlaylist(id: String, name: String, ids: List<String>) { queueManager.updateCustomPlaylist(id, name, ids); syncWithQueueManager() }
     fun deletePlaylist(id: String) { queueManager.deletePlaylist(id); syncWithQueueManager() }
@@ -358,6 +428,7 @@ class MusicPlaybackService : Service() {
             if (selectedOccasions.isNotEmpty()) titleParts.add(selectedOccasions.joinToString(","))
             val playlistTitle = if (titleParts.isEmpty()) "전체 검색" else "검색: ${titleParts.joinToString(" / ")}"
 
+            stopCurrentSong()
             queueManager.setTemporaryPlaylist(playlistTitle, results)
             syncWithQueueManager()
         }
@@ -379,47 +450,29 @@ class MusicPlaybackService : Service() {
     fun toggleSelectionMode() {
         val enteringSelectionMode = !queueManager.isSelectionMode
         if (enteringSelectionMode) {
-            // Get the song that was either playing or in standby before stopping
-            val songToSelect = currentSong ?: queueManager.getCurrentTrack()
-            
+            val songToSelect = queueManager.getCurrentTrack()
             stopCurrentSong()
-            
-            // Auto-select the current song as the first item in the multi-selection
-            songToSelect?.let {
-                queueManager.toggleSelection(it.id)
-                // Set as standby track for the selection mode
-                _currentTrack.value = it
-            }
+            queueManager.toggleSelectionMode()
+            songToSelect?.let { queueManager.toggleSelection(it.id) }
+        } else {
+            queueManager.toggleSelectionMode()
         }
-        
-        queueManager.toggleSelectionMode()
         syncWithQueueManager()
     }
 
     fun toggleSelection(id: String) {
-        if (!_isSelectionMode.value) {
+        if (!queueManager.isSelectionMode) {
             stopCurrentSong()
-            _isSelectionMode.value = true
-            queueManager.isSelectionMode = true
+            queueManager.toggleSelectionMode()
         }
+        val wasSelectionPlayback = queueManager.isSelectionPlayback
         queueManager.toggleSelection(id)
-        
-        // --- Enhanced Standby Logic ---
-        val currentQueue = queueManager.getActiveQueueSongs()
-        val firstSelected = currentQueue.firstOrNull { queueManager.selectedIds.contains(it.id) }
-        
-        if (firstSelected != null) {
-            _currentTrack.value = firstSelected
-        } else {
-            // Nothing selected -> Exit mode and reset standby track
-            _isSelectionMode.value = false
-            queueManager.isSelectionMode = false
-            _isSelectionPlayback.value = false
-            queueManager.isSelectionPlayback = false
-            _currentTrack.value = queueManager.getCurrentTrack()
-        }
-        
+        if (wasSelectionPlayback && !queueManager.isSelectionPlayback) stopCurrentSong()
         syncWithQueueManager()
+    }
+
+    fun onPlaylistSongClick(id: String) {
+        if (queueManager.isSelectionMode) toggleSelection(id) else playTrackById(id)
     }
 
     fun toggleLike(fingerprintId: String) {
@@ -428,7 +481,7 @@ class MusicPlaybackService : Service() {
             val currentMeta = appDatabase.songMetaDao().getMetadataById(fingerprintId)
             
             if (currentMeta != null) {
-                appDatabase.songMetaDao().updateLikeStatus(fingerprintId, !isCurrentlyLiked)
+                appDatabase.songMetaDao().updateLikeStatus(fingerprintId, !isCurrentlyLiked, System.currentTimeMillis())
             } else {
                 val file = cachedAllSongs.find { it.fingerprintId == fingerprintId }
                 appDatabase.songMetaDao().insertOrUpdate(
@@ -470,12 +523,11 @@ class MusicPlaybackService : Service() {
     }
 
     fun startSelectionPlayback() {
-        if (_selectedIds.value.isNotEmpty()) {
-            queueManager.isSelectionPlayback = true
-            _isSelectionPlayback.value = true
-            val firstSelected = _allSongsInQueue.value.firstOrNull { _selectedIds.value.contains(it.id) }
-            firstSelected?.let { playSong(it) }
-        }
+        val selected = queueManager.selectedIds
+        val firstSelected = queueManager.getActiveQueueSongs().firstOrNull { it.id in selected } ?: return
+        val track = queueManager.playTrackById(firstSelected.id) ?: return
+        queueManager.isSelectionPlayback = playSong(track)
+        syncWithQueueManager()
     }
 
     fun selectAll() { 
@@ -577,6 +629,7 @@ class MusicPlaybackService : Service() {
         currentSong = null
         _currentTrack.value = null
         _currentPosition.value = 0L
+        _duration.value = 0L
     }
     
     private fun stopService() { stopCurrentSong(); @Suppress("DEPRECATION") stopForeground(true); stopSelf() }
