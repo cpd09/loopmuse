@@ -1,18 +1,21 @@
 package com.example.loopmuse.ui
 
-import android.app.TimePickerDialog
 import android.app.NotificationManager
+import android.app.AlarmManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
+import android.media.AudioManager
 import android.media.MediaMetadataRetriever
 import android.media.MediaPlayer
+import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -36,6 +39,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -57,9 +61,9 @@ import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
@@ -77,7 +81,15 @@ fun AlarmSettingDialog(
     val notificationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         permissionRefresh++
     }
+    LaunchedEffect(Unit) {
+        AlarmPlaybackService.ensureNotificationChannel(context)
+        permissionRefresh++
+    }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { permissionRefresh++ }
+    val needsExactAlarmPermission = permissionRefresh.let {
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            !(context.getSystemService(Context.ALARM_SERVICE) as AlarmManager).canScheduleExactAlarms()
+    }
     val needsNotificationPermission = permissionRefresh.let {
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -94,6 +106,12 @@ fun AlarmSettingDialog(
                     ?.importance?.let { it < NotificationManager.IMPORTANCE_HIGH } == true)
         if (needsNotificationPermission) false else notificationsBlocked
     }
+    fun canEnableAlarm(): Boolean {
+        if (!needsExactAlarmPermission && !needsNotificationPermission &&
+            !needsNotificationSettings && !needsFullScreenPermission) return true
+        Toast.makeText(context, "알람 화면을 표시하려면 위의 알람 권한을 먼저 허용해 주세요.", Toast.LENGTH_LONG).show()
+        return false
+    }
     val scope = rememberCoroutineScope()
     val alarmListState = rememberLazyListState()
     val alarmFlow = remember(context) { AppDatabase.getDatabase(context).alarmDao().getAllAlarms() }
@@ -105,9 +123,10 @@ fun AlarmSettingDialog(
     var hour by remember { mutableIntStateOf(7) }
     var minute by remember { mutableIntStateOf(0) }
     var days by remember { mutableStateOf((1..7).toSet()) }
-    var isEnabled by remember { mutableStateOf(true) }
     var targetVolume by remember { mutableFloatStateOf(0.7f) }
     var useFadeIn by remember { mutableStateOf(true) }
+    var respectPhoneSoundMode by remember { mutableStateOf(false) }
+    var showTimePicker by remember { mutableStateOf(false) }
     var songPath by remember { mutableStateOf(currentTrack?.path) }
     var songTitle by remember { mutableStateOf(currentTrack?.title) }
     var songFingerprint by remember { mutableStateOf(currentTrack?.fingerprintId) }
@@ -124,6 +143,81 @@ fun AlarmSettingDialog(
         previewJob?.cancel()
         previewJob = null
         isPreviewing = false
+    }
+
+    fun previewSound() {
+        if (isPreviewing) {
+            stopPreview()
+            return
+        }
+        if (AlarmPlaybackService.activeAlarmId != 0) {
+            Toast.makeText(context, "울리는 알람을 먼저 종료해 주세요.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val previewPath = songPath
+        val previewStart = startPositionMs
+        val previewEnd = endPositionMs
+        val previewVolume = targetVolume
+        previewJob = scope.launch {
+            isPreviewing = true
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val player = MediaPlayer()
+            var savedAlarmVolume: Int? = null
+            var songPrepared = false
+            try {
+                withContext(Dispatchers.IO) {
+                    player.setAudioAttributes(AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build())
+                    val file = previewPath?.let(::File)
+                    if (file?.isFile == true && file.canRead()) {
+                        try {
+                            player.setDataSource(file.absolutePath)
+                            player.prepare()
+                            songPrepared = true
+                        } catch (_: Exception) {
+                            player.reset()
+                            player.setAudioAttributes(AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_ALARM)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build())
+                        }
+                    }
+                    if (!songPrepared) {
+                        val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+                            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                            ?: error("기본 알람음을 찾을 수 없습니다.")
+                        player.setDataSource(context, uri)
+                        player.prepare()
+                    }
+                }
+                if (songPrepared && previewStart > 0L) {
+                    player.seekTo(previewStart.coerceAtMost((player.duration - 1).coerceAtLeast(0).toLong()).toInt())
+                }
+                savedAlarmVolume = audioManager.getStreamVolume(AudioManager.STREAM_ALARM)
+                val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
+                audioManager.setStreamVolume(AudioManager.STREAM_ALARM,
+                    (maxVolume * previewVolume).roundToInt().coerceAtLeast(1), 0)
+                player.start()
+                val sampleLength = if (songPrepared && previewEnd > previewStart)
+                    (previewEnd - previewStart).coerceAtMost(5_000L) else 5_000L
+                var elapsed = 0L
+                while (elapsed < sampleLength && player.isPlaying && AlarmPlaybackService.activeAlarmId == 0) {
+                    delay(100L)
+                    elapsed += 100L
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Toast.makeText(context, "알람음을 미리 들을 수 없습니다.", Toast.LENGTH_SHORT).show()
+            } finally {
+                player.release()
+                if (AlarmPlaybackService.activeAlarmId == 0) {
+                    savedAlarmVolume?.let { audioManager.setStreamVolume(AudioManager.STREAM_ALARM, it, 0) }
+                }
+                isPreviewing = false
+                previewJob = null
+            }
+        }
     }
 
     fun useCurrentSong() {
@@ -143,9 +237,9 @@ fun AlarmSettingDialog(
         hour = 7
         minute = 0
         days = (1..7).toSet()
-        isEnabled = true
         targetVolume = 0.7f
         useFadeIn = true
+        respectPhoneSoundMode = false
         useCurrentSong()
     }
 
@@ -158,9 +252,9 @@ fun AlarmSettingDialog(
         hour = alarm.hour
         minute = alarm.minute
         days = alarm.repeatDays.split(',').mapNotNull { it.toIntOrNull() }.filter { it in 1..7 }.toSet()
-        isEnabled = alarm.isEnabled
-        targetVolume = alarm.targetVolume
+        targetVolume = alarm.targetVolume.coerceIn(0.1f, 1f)
         useFadeIn = alarm.useFadeIn
+        respectPhoneSoundMode = alarm.respectPhoneSoundMode
         songPath = alarm.songPath
         songTitle = alarm.songTitle
         songFingerprint = alarm.songFingerprintId
@@ -221,9 +315,22 @@ fun AlarmSettingDialog(
         )
     }
 
+    if (showTimePicker) {
+        AlarmTimePickerDialog(
+            initialHour = hour,
+            initialMinute = minute,
+            onDismiss = { showTimePicker = false },
+            onConfirm = { selectedHour, selectedMinute ->
+                hour = selectedHour
+                minute = selectedMinute
+                showTimePicker = false
+            }
+        )
+    }
+
     Dialog(onDismissRequest = { stopPreview(); onDismiss() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         BoxWithConstraints(
-            modifier = Modifier.fillMaxWidth(0.94f).fillMaxHeight(0.76f),
+            modifier = Modifier.fillMaxWidth(0.96f).fillMaxHeight(0.92f),
             contentAlignment = Alignment.Center
         ) {
         Surface(
@@ -241,9 +348,10 @@ fun AlarmSettingDialog(
                         Icon(Icons.Default.Close, contentDescription = "닫기")
                     }
                 }
-                if (needsNotificationPermission || needsFullScreenPermission || needsNotificationSettings) {
+                if (needsExactAlarmPermission || needsNotificationPermission ||
+                    needsFullScreenPermission || needsNotificationSettings) {
                     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-                        Text("알람 종료 화면과 버튼을 바로 보려면 알림·전체 화면 표시를 허용하세요.", fontSize = 13.sp)
+                        Text("알람이 정시에 울리고 잠금 화면에 표시되려면 아래 권한을 허용하세요.", fontSize = 13.sp)
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End,
                             verticalAlignment = Alignment.CenterVertically) {
                             if (needsNotificationPermission) {
@@ -284,11 +392,28 @@ fun AlarmSettingDialog(
                                 }
                             }
                         }
+                        if (needsExactAlarmPermission) {
+                            TextButton(onClick = {
+                                context.startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                                    Uri.parse("package:${context.packageName}")))
+                            }, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)) {
+                                Text("정확한 알람 허용", fontSize = 12.sp)
+                            }
+                        }
                     }
                 }
                 Spacer(Modifier.height(6.dp))
-                Text("설정된 알람", fontWeight = FontWeight.Bold)
-                BoxWithConstraints(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("저장된 알람", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    TextButton(onClick = ::newAlarm,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
+                        Text("+ 새 알람", fontSize = 12.sp)
+                    }
+                }
+                BoxWithConstraints(modifier = Modifier.fillMaxWidth().height(
+                    if (alarms.isEmpty()) 70.dp else (alarms.size * 34).coerceAtMost(102).dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)) {
                     val visibleAlarmRows = (maxHeight.value / 34f).toInt().coerceAtLeast(1)
                     if (alarms.isEmpty()) {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -307,7 +432,7 @@ fun AlarmSettingDialog(
                                         .clip(RoundedCornerShape(7.dp))
                                         .background(if (selected) MaterialTheme.colorScheme.primaryContainer
                                             else MaterialTheme.colorScheme.surfaceVariant)
-                                        .clickable { if (selected) newAlarm() else loadAlarm(alarm) }
+                                        .clickable { loadAlarm(alarm) }
                                         .padding(horizontal = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
@@ -316,11 +441,11 @@ fun AlarmSettingDialog(
                                         enabled = updatingAlarmId != alarm.id,
                                         time = clockText(alarm.hour, alarm.minute),
                                         onCheckedChange = { enabled ->
+                                            if (enabled && !canEnableAlarm()) return@AlarmListToggle
                                             updatingAlarmId = alarm.id
                                             scope.launch {
                                                 try {
                                                     connection.scheduleAlarm(alarm.copy(isEnabled = enabled))
-                                                    if (selectedId == alarm.id) isEnabled = enabled
                                                 } catch (e: Exception) {
                                                     Toast.makeText(context,
                                                         e.message ?: "알람 상태를 변경하지 못했습니다.", Toast.LENGTH_LONG).show()
@@ -391,17 +516,27 @@ fun AlarmSettingDialog(
                         )
                     }
                 }
-                HorizontalDivider(modifier = Modifier.padding(vertical = 9.dp))
-                Text("알람 설정 내역",
-                    fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                HorizontalDivider(modifier = Modifier.padding(top = 9.dp, bottom = 6.dp))
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (selectedAlarm == null) "새 알람 설정" else "${clockText(hour, minute)} 알람 수정",
+                        fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(1f))
+                    Text("저장하면 켜짐", fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.primary)
+                }
                 Spacer(Modifier.height(4.dp))
-                Column(modifier = Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState())) {
-                    Text("시간 · 반복 요일", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(3.dp))
+                Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                    Surface(shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                    Text("시간과 반복", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(6.dp))
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         OutlinedButton(
-                            onClick = { TimePickerDialog(context, { _, h, m -> hour = h; minute = m }, hour, minute, true).show() },
+                            onClick = { showTimePicker = true },
                             modifier = Modifier.height(38.dp),
                             contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp)
                         ) { Text(clockText(hour, minute), fontSize = 16.sp, fontWeight = FontWeight.Bold) }
@@ -432,7 +567,16 @@ fun AlarmSettingDialog(
                         Text("요일 미선택: 한 번만 울림", fontSize = 10.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    HorizontalDivider(modifier = Modifier.padding(top = 8.dp, bottom = 3.dp))
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Surface(shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                    Text("재생 곡과 구간", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(3.dp))
                     Row(modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
                         verticalAlignment = Alignment.CenterVertically) {
                         Text("곡", fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(29.dp))
@@ -445,7 +589,7 @@ fun AlarmSettingDialog(
                         }
                     }
                     if (songPath != null && songDurationMs == 0L) {
-                        Text("곡 파일을 확인할 수 없어 구간 설정과 미리듣기를 사용할 수 없습니다.",
+                        Text("곡 파일을 찾을 수 없어 기본 알람음으로 재생됩니다.",
                             fontSize = 10.sp, color = MaterialTheme.colorScheme.error)
                     }
                     HorizontalDivider(modifier = Modifier.padding(vertical = 3.dp))
@@ -454,40 +598,6 @@ fun AlarmSettingDialog(
                         Text("구간", fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(29.dp))
                         Text(if (songDurationMs > 0L) "시작 ${timeText(startPositionMs)}  끝 ${timeText(endPositionMs)}" else "전체 곡",
                             fontSize = 12.sp, maxLines = 1, modifier = Modifier.weight(1f))
-                        TextButton(
-                            onClick = {
-                                if (isPreviewing) {
-                                    stopPreview()
-                                } else {
-                                    val path = songPath ?: return@TextButton
-                                    val previewStart = startPositionMs
-                                    val previewEnd = endPositionMs
-                                    previewJob = scope.launch {
-                                        val player = MediaPlayer()
-                                        try {
-                                            withContext(Dispatchers.IO) {
-                                                player.setAudioAttributes(AudioAttributes.Builder()
-                                                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                                                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build())
-                                                player.setDataSource(path)
-                                                player.prepare()
-                                            }
-                                            player.seekTo(previewStart.toInt())
-                                            player.start()
-                                            isPreviewing = true
-                                            while (isActive && player.isPlaying && player.currentPosition < previewEnd) delay(100L)
-                                        } catch (e: Exception) {
-                                            Toast.makeText(context, "미리듣기를 재생할 수 없습니다.", Toast.LENGTH_SHORT).show()
-                                        } finally {
-                                            player.release()
-                                            isPreviewing = false
-                                        }
-                                    }
-                                }
-                            },
-                            enabled = songDurationMs > 0L,
-                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
-                        ) { Text(if (isPreviewing) "■ 멈춤" else "▶ 재생", fontSize = 12.sp) }
                     }
                     if (songDurationMs > 1000L) {
                         RangeSlider(
@@ -506,27 +616,102 @@ fun AlarmSettingDialog(
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Surface(shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically) {
+                                Text("알람벨 소리 설정", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.width(8.dp))
+                                Text("이 알람에만 적용", fontSize = 11.sp,
+                                    lineHeight = 14.sp, textAlign = TextAlign.End,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.weight(1f))
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            Column(modifier = Modifier.fillMaxWidth()
+                                .clip(RoundedCornerShape(11.dp))
+                                .background(MaterialTheme.colorScheme.surface)) {
+                                AlarmSoundModeOption(
+                                    selected = !respectPhoneSoundMode,
+                                    title = "무음·진동이어도 소리",
+                                    onClick = { respectPhoneSoundMode = false }
+                                )
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                AlarmSoundModeOption(
+                                    selected = respectPhoneSoundMode,
+                                    title = "휴대폰 소리 모드 따르기",
+                                    onClick = { respectPhoneSoundMode = true }
+                                )
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            Row(modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically) {
+                                Text("페이드인", fontSize = 13.sp, modifier = Modifier.weight(1f))
+                                Switch(checked = useFadeIn, onCheckedChange = { useFadeIn = it })
+                            }
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                            Spacer(Modifier.height(8.dp))
+                            Row(modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically) {
+                                Text("알람 음량", fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.weight(1f))
+                                Text("${(targetVolume * 100).roundToInt()}%", fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                Spacer(Modifier.width(8.dp))
+                                OutlinedButton(onClick = ::previewSound,
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)) {
+                                    Text(if (isPreviewing) "멈추기" else "5초 미리 듣기", fontSize = 12.sp)
+                                }
+                            }
+                            Slider(value = targetVolume.coerceIn(0.1f, 1f),
+                                onValueChange = { targetVolume = it; stopPreview() },
+                                valueRange = 0.1f..1f, steps = 8,
+                                modifier = Modifier.fillMaxWidth())
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Surface(shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        modifier = Modifier.fillMaxWidth()) {
+                        Row(modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            Text("방해금지에서는 휴대폰의 '알람 허용' 설정이 적용됩니다.",
+                                fontSize = 11.sp, modifier = Modifier.weight(1f))
+                            TextButton(onClick = {
+                                val action = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                                    Settings.ACTION_ZEN_MODE_PRIORITY_SETTINGS else Settings.ACTION_SOUND_SETTINGS
+                                runCatching { context.startActivity(Intent(action)) }
+                                    .onFailure { context.startActivity(Intent(Settings.ACTION_SOUND_SETTINGS)) }
+                            }, contentPadding = PaddingValues(horizontal = 6.dp)) {
+                                Text("설정", fontSize = 11.sp)
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
                 }
-                HorizontalDivider(modifier = Modifier.padding(vertical = 3.dp))
                 Row(modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp),
                     verticalAlignment = Alignment.CenterVertically) {
-                    Text("페이드인", fontSize = 12.sp, modifier = Modifier.padding(end = 4.dp))
-                    Switch(checked = useFadeIn, onCheckedChange = { useFadeIn = it },
-                        modifier = Modifier.size(width = 49.dp, height = 32.dp))
                     Spacer(Modifier.weight(1f))
                     OutlinedButton(
                         onClick = {
                             val source = selectedAlarm ?: return@OutlinedButton
+                            if (!canEnableAlarm()) return@OutlinedButton
                             stopPreview()
                             isSaving = true
                             scope.launch {
                                 try {
-                                    val newId = connection.scheduleAlarm(source.copy(id = 0))
-                                    loadAlarm(source.copy(id = newId))
+                                    val newId = connection.scheduleAlarm(source.copy(id = 0, isEnabled = true))
+                                    loadAlarm(source.copy(id = newId, isEnabled = true))
                                     val copiedIndex = snapshotFlow { alarms.indexOfFirst { it.id == newId } }
                                         .first { it >= 0 }
                                     alarmListState.scrollToItem(copiedIndex)
-                                    Toast.makeText(context, "알람을 복사했습니다. 시간을 수정할 수 있습니다.", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "알람을 복사해 켰습니다. 시간을 수정할 수 있습니다.", Toast.LENGTH_SHORT).show()
                                 } catch (e: Exception) {
                                     Toast.makeText(context, e.message ?: "알람 복사에 실패했습니다.", Toast.LENGTH_LONG).show()
                                 } finally {
@@ -540,18 +725,20 @@ fun AlarmSettingDialog(
                     ) { Text("복사", fontSize = 12.sp) }
                     Spacer(Modifier.width(5.dp))
                     Button(onClick = {
+                        if (!canEnableAlarm()) return@Button
                         if (songDurationMs > 0L && (endPositionMs <= startPositionMs || endPositionMs > songDurationMs)) {
                             Toast.makeText(context, "곡 구간을 다시 선택해 주세요.", Toast.LENGTH_SHORT).show()
                             return@Button
                         }
                         val wholeSong = songDurationMs > 0L && startPositionMs == 0L && endPositionMs == songDurationMs
                         val alarm = (selectedAlarm ?: AlarmEntity(hour = hour, minute = minute)).copy(
-                            hour = hour, minute = minute, isEnabled = isEnabled,
+                            hour = hour, minute = minute, isEnabled = true,
                             repeatDays = days.sorted().joinToString(","), isOneTime = days.isEmpty(),
                             songFingerprintId = songFingerprint, songTitle = songTitle, songPath = songPath,
                             startPositionMs = if (wholeSong) 0L else startPositionMs,
                             endPositionMs = if (wholeSong) 0L else endPositionMs,
-                            targetVolume = targetVolume, useFadeIn = useFadeIn
+                            targetVolume = targetVolume, useFadeIn = useFadeIn,
+                            respectPhoneSoundMode = respectPhoneSoundMode
                         )
                         stopPreview()
                         isSaving = true
@@ -568,7 +755,7 @@ fun AlarmSettingDialog(
                         }
                     }, enabled = !isSaving, modifier = Modifier.height(36.dp),
                         contentPadding = PaddingValues(horizontal = 11.dp, vertical = 0.dp)) {
-                        Text("저장", fontSize = 12.sp)
+                        Text("저장하고 켜기", fontSize = 12.sp)
                     }
                 }
             }
@@ -582,6 +769,26 @@ private fun clockText(hour: Int, minute: Int) = String.format(Locale.KOREA, "%02
 private fun timeText(millis: Long): String {
     val seconds = millis / 1000L
     return String.format(Locale.KOREA, "%02d:%02d", seconds / 60L, seconds % 60L)
+}
+
+@Composable
+private fun AlarmSoundModeOption(
+    selected: Boolean,
+    title: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth()
+            .background(if (selected) MaterialTheme.colorScheme.primaryContainer
+                else MaterialTheme.colorScheme.surface)
+            .clickable(role = Role.RadioButton, onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(selected = selected, onClick = null, modifier = Modifier.size(34.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+    }
 }
 
 @Composable

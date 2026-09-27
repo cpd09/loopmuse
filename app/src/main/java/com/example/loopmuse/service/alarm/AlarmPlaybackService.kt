@@ -13,6 +13,8 @@ import android.media.AudioManager
 import android.media.MediaPlayer
 import android.os.Build
 import android.os.IBinder
+import android.os.VibrationEffect
+import android.os.Vibrator
 import androidx.core.app.NotificationCompat
 import android.util.Log
 import com.example.loopmuse.MainActivity
@@ -29,6 +31,7 @@ import kotlinx.coroutines.launch
 class AlarmPlaybackService : Service() {
 
     private var mediaPlayer: MediaPlayer? = null
+    private var alarmVibrator: Vibrator? = null
     private var segmentJob: Job? = null
     private var fadeJob: Job? = null
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
@@ -59,6 +62,17 @@ class AlarmPlaybackService : Service() {
 
         @Volatile private var ringingAlarm: RingingAlarm? = null
 
+        fun ensureNotificationChannel(context: Context) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val channel = NotificationChannel(
+                    ALARM_CHANNEL_ID,
+                    "Alarms",
+                    NotificationManager.IMPORTANCE_HIGH
+                ).apply { lockscreenVisibility = Notification.VISIBILITY_PUBLIC }
+                context.getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
+            }
+        }
+
         fun activeScreenIntent(context: Context): Intent? = ringingAlarm?.let { alarm ->
             Intent(context, AlarmRingingActivity::class.java).apply {
                 putExtra("ALARM_ID", alarm.id)
@@ -74,7 +88,7 @@ class AlarmPlaybackService : Service() {
     override fun onCreate() {
         super.onCreate()
         audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
-        createNotificationChannel()
+        ensureNotificationChannel(this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -108,7 +122,7 @@ class AlarmPlaybackService : Service() {
                 sendBroadcast(Intent(ACTION_SNOOZE_FAILED).setPackage(packageName).putExtra("ALARM_ID", requestedId))
                 return START_NOT_STICKY
             }
-            endAlarm(if (isSnoozeRing) ACTION_ALARM_SILENCED else ACTION_ALARM_FINISHED)
+            endAlarm(ACTION_ALARM_SILENCED)
             return START_NOT_STICKY
         }
 
@@ -136,6 +150,7 @@ class AlarmPlaybackService : Service() {
         val endPositionMs = intent.getLongExtra("END_POSITION", 0L)
         val targetVolume = intent.getFloatExtra("TARGET_VOLUME", 0.5f)
         val useFadeIn = intent.getBooleanExtra("USE_FADE_IN", true)
+        val respectPhoneSoundMode = intent.getBooleanExtra("RESPECT_PHONE_SOUND_MODE", false)
 
         val notification = createNotification(
             alarmId,
@@ -164,14 +179,25 @@ class AlarmPlaybackService : Service() {
         }
 
         serviceScope.launch {
-            playAlarm(songPath, startPositionMs, endPositionMs, targetVolume, useFadeIn)
+            playAlarm(songPath, startPositionMs, endPositionMs, targetVolume, useFadeIn,
+                respectPhoneSoundMode)
         }
 
         return START_NOT_STICKY
     }
 
-    private fun playAlarm(songPath: String?, startPositionMs: Long, endPositionMs: Long, targetVolume: Float, useFadeIn: Boolean) {
-        // --- Volume Override Logic (Ignore Silent/Vibrate) ---
+    private fun playAlarm(songPath: String?, startPositionMs: Long, endPositionMs: Long,
+                          targetVolume: Float, useFadeIn: Boolean, respectPhoneSoundMode: Boolean) {
+        if (respectPhoneSoundMode) {
+            when (audioManager.ringerMode) {
+                AudioManager.RINGER_MODE_SILENT -> return
+                AudioManager.RINGER_MODE_VIBRATE -> {
+                    startAlarmVibration()
+                    return
+                }
+            }
+        }
+        // Alarm audio uses the separate alarm stream in every phone sound mode.
         originalVolume = audioManager.getStreamVolume(AudioManager.STREAM_ALARM)
         volumeWasChanged = true
         val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
@@ -284,6 +310,8 @@ class AlarmPlaybackService : Service() {
     }
 
     private fun releasePlayback() {
+        alarmVibrator?.cancel()
+        alarmVibrator = null
         segmentJob?.cancel()
         segmentJob = null
         fadeJob?.cancel()
@@ -297,6 +325,22 @@ class AlarmPlaybackService : Service() {
         if (volumeWasChanged) {
             audioManager.setStreamVolume(AudioManager.STREAM_ALARM, originalVolume, 0)
             volumeWasChanged = false
+        }
+    }
+
+    private fun startAlarmVibration() {
+        @Suppress("DEPRECATION")
+        val vibrator = getSystemService(VIBRATOR_SERVICE) as? Vibrator ?: return
+        if (!vibrator.hasVibrator()) return
+        alarmVibrator = vibrator
+        val pattern = longArrayOf(0L, 600L, 400L)
+        val attributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            @Suppress("DEPRECATION")
+            vibrator.vibrate(VibrationEffect.createWaveform(pattern, 0), attributes)
+        } else {
+            @Suppress("DEPRECATION")
+            vibrator.vibrate(pattern, 0, attributes)
         }
     }
 
@@ -332,18 +376,6 @@ class AlarmPlaybackService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
-
-    private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                ALARM_CHANNEL_ID,
-                "Alarms",
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply { lockscreenVisibility = Notification.VISIBILITY_PUBLIC }
-            val manager = getSystemService(NotificationManager::class.java)
-            manager?.createNotificationChannel(channel)
-        }
-    }
 
     private fun createNotification(alarmId: Int, hour: Int, minute: Int, songTitle: String?): Notification {
         val stopIntent = Intent(this, AlarmPlaybackService::class.java).apply {

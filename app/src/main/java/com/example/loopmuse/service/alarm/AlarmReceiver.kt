@@ -21,6 +21,9 @@ class AlarmReceiver : BroadcastReceiver() {
 
         val alarmId = intent.getIntExtra("ALARM_ID", 0)
         val isSnooze = intent.action == AlarmScheduler.ACTION_SNOOZE_TRIGGER
+        val scheduledAt = intent.getLongExtra("SCHEDULED_AT", 0L)
+        Log.i("LoopMuse", "Alarm received: id=$alarmId snooze=$isSnooze delayMs=" +
+            if (scheduledAt > 0L) (System.currentTimeMillis() - scheduledAt).toString() else "unknown")
         if (alarmId <= 0) {
             wakeLock.release()
             return
@@ -43,6 +46,7 @@ class AlarmReceiver : BroadcastReceiver() {
                     putExtra("END_POSITION", alarm.endPositionMs)
                     putExtra("TARGET_VOLUME", alarm.targetVolume)
                     putExtra("USE_FADE_IN", alarm.useFadeIn)
+                    putExtra("RESPECT_PHONE_SOUND_MODE", alarm.respectPhoneSoundMode)
                 }
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                     context.startForegroundService(serviceIntent)

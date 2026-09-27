@@ -18,5 +18,6 @@ data class AlarmEntity(
     val startPositionMs: Long = 0L,
     val endPositionMs: Long = 0L, // 0 means play the whole song
     val targetVolume: Float = 0.5f, // 0.0 to 1.0
-    val useFadeIn: Boolean = true
+    val useFadeIn: Boolean = true,
+    val respectPhoneSoundMode: Boolean = false // Keep existing alarms audible in silent/vibrate mode.
 )

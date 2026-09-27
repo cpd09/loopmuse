@@ -17,8 +17,8 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -28,9 +28,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -39,8 +41,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -62,7 +69,6 @@ class AlarmRingingActivity : ComponentActivity() {
     private var alarmMinute by mutableStateOf(0)
     private var songTitle by mutableStateOf<String?>(null)
     private var actionPending by mutableStateOf(false)
-    private var isSnoozeRing by mutableStateOf(false)
     private var isChaseMode by mutableStateOf(false)
 
     private val alarmFinishedReceiver = object : BroadcastReceiver() {
@@ -92,6 +98,10 @@ class AlarmRingingActivity : ComponentActivity() {
             window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON)
         }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        window.statusBarColor = android.graphics.Color.rgb(11, 16, 27)
+        window.navigationBarColor = android.graphics.Color.rgb(11, 16, 27)
+        @Suppress("DEPRECATION")
+        window.decorView.systemUiVisibility = 0
         readAlarm(intent)
         isChaseMode = savedInstanceState?.getBoolean("CHASE_MODE") ?: false
         setContent {
@@ -99,10 +109,9 @@ class AlarmRingingActivity : ComponentActivity() {
                 AlarmRingingScreen(
                     time = String.format(Locale.KOREA, "%02d:%02d", alarmHour, alarmMinute),
                     songTitle = songTitle,
-                    isSnoozeRing = isSnoozeRing,
                     isChaseMode = isChaseMode,
                     actionPending = actionPending,
-                    onSilence = { sendAction(AlarmPlaybackService.ACTION_STOP_ALARM) },
+                    onSnooze = { sendAction(AlarmPlaybackService.ACTION_STOP_ALARM) },
                     onComplete = { sendAction(AlarmPlaybackService.ACTION_DISMISS_SNOOZE) }
                 )
             }
@@ -128,8 +137,8 @@ class AlarmRingingActivity : ComponentActivity() {
                 addAction(AlarmPlaybackService.ACTION_ALARM_SILENCED)
                 addAction(AlarmPlaybackService.ACTION_SNOOZE_FAILED)
             }, ContextCompat.RECEIVER_NOT_EXPORTED)
-        if (alarmId == 0 || (isChaseMode && !AlarmScheduler(this).hasSnooze(alarmId)) ||
-            (!isChaseMode && AlarmPlaybackService.activeAlarmId != alarmId)) finish()
+        val ringingNow = AlarmPlaybackService.activeAlarmId == alarmId
+        if (alarmId == 0 || (!ringingNow && !(isChaseMode && AlarmScheduler(this).hasSnooze(alarmId)))) finish()
     }
 
     override fun onResume() {
@@ -152,7 +161,6 @@ class AlarmRingingActivity : ComponentActivity() {
         alarmHour = intent.getIntExtra("ALARM_HOUR", 0)
         alarmMinute = intent.getIntExtra("ALARM_MINUTE", 0)
         songTitle = intent.getStringExtra("SONG_TITLE")
-        isSnoozeRing = intent.getBooleanExtra("IS_SNOOZE", false)
         isChaseMode = false
         actionPending = false
     }
@@ -172,85 +180,133 @@ class AlarmRingingActivity : ComponentActivity() {
     }
 }
 
+private val nightBackground = Color(0xFF0B101B)
+private val lavender = Color(0xFFB9A9F5)
+private val softWhite = Color(0xFFF7F3FF)
+
 @Composable
 private fun AlarmRingingScreen(
     time: String,
     songTitle: String?,
-    isSnoozeRing: Boolean,
     isChaseMode: Boolean,
     actionPending: Boolean,
-    onSilence: () -> Unit,
+    onSnooze: () -> Unit,
     onComplete: () -> Unit
 ) {
-    val background = Color(0xFF17122A)
-    val accent = Color(0xFFB9A3FF)
-    Surface(modifier = Modifier.fillMaxSize(), color = background) {
+    Surface(modifier = Modifier.fillMaxSize(), color = nightBackground) {
         Column(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 58.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceBetween
+            modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("⏰", fontSize = 54.sp)
-                Spacer(Modifier.height(24.dp))
-                Text(if (isChaseMode) "재알람이 잠시 멈췄습니다" else if (isSnoozeRing) "LoopMuse 재알람" else "LoopMuse 알람",
-                    fontSize = 22.sp, color = accent, fontWeight = FontWeight.Bold)
-                Text(time, fontSize = 72.sp, color = Color.White, fontWeight = FontWeight.Bold)
-                Text(songTitle?.takeIf { it.isNotBlank() } ?: "알람음",
-                    fontSize = 18.sp, color = Color.White.copy(alpha = 0.8f),
-                    maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
-            }
-            Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                if (isChaseMode) {
-                    Text("5분 뒤 다시 울립니다.\n토끼를 눌러 완전히 종료하세요.",
-                        color = Color.White.copy(alpha = 0.8f), fontSize = 16.sp, textAlign = TextAlign.Center)
-                    Spacer(Modifier.height(20.dp))
-                    val transition = rememberInfiniteTransition(label = "토끼 이동")
-                    val position by transition.animateFloat(
-                        initialValue = 0f,
-                        targetValue = 1f,
-                        animationSpec = infiniteRepeatable(animation = tween(9000, easing = LinearEasing), repeatMode = RepeatMode.Reverse),
-                        label = "좌우 이동"
+            Text("LOOPMUSE  ·  ALARM", fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                letterSpacing = 2.sp, color = lavender)
+            Spacer(Modifier.height(10.dp))
+            Text(time, fontSize = 68.sp, fontWeight = FontWeight.Bold, color = softWhite)
+            Text(songTitle?.takeIf { it.isNotBlank() } ?: "알람음",
+                fontSize = 16.sp, color = softWhite.copy(alpha = 0.72f),
+                maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(28.dp))
+            RabbitRunway(Modifier.fillMaxWidth().weight(1f))
+            Spacer(Modifier.height(24.dp))
+            Text(if (isChaseMode) "5분 뒤 다시 울립니다" else "알람이 울리고 있습니다",
+                fontSize = 17.sp, fontWeight = FontWeight.Medium, color = softWhite)
+            Spacer(Modifier.height(20.dp))
+            Button(
+                onClick = onComplete,
+                enabled = !actionPending,
+                modifier = Modifier.fillMaxWidth().height(62.dp),
+                shape = RoundedCornerShape(20.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = lavender, contentColor = nightBackground)
+            ) { Text("완전히 종료", fontSize = 19.sp, fontWeight = FontWeight.Bold) }
+            Spacer(Modifier.height(12.dp))
+            OutlinedButton(
+                onClick = onSnooze,
+                enabled = !actionPending && !isChaseMode,
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                shape = RoundedCornerShape(18.dp),
+                border = BorderStroke(1.dp, lavender.copy(alpha = 0.55f)),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = softWhite,
+                    disabledContentColor = softWhite.copy(alpha = 0.62f))
+            ) { Text(if (isChaseMode) "재알람 대기 중" else "5분 뒤 다시 울림", fontSize = 16.sp) }
+        }
+    }
+}
+
+@Composable
+private fun RabbitRunway(modifier: Modifier = Modifier) {
+    val movement = rememberInfiniteTransition(label = "토끼 달리기")
+    val cycle by movement.animateFloat(
+        initialValue = 0f,
+        targetValue = 2f,
+        animationSpec = infiniteRepeatable(tween(7600, easing = LinearEasing), RepeatMode.Restart),
+        label = "좌우 이동"
+    )
+    val hop by movement.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(keyframes {
+            durationMillis = 760
+            0f at 0
+            1f at 240
+            0f at 520
+            0f at 760
+        }),
+        label = "빠른 점프"
+    )
+    Surface(modifier = modifier, shape = RoundedCornerShape(28.dp), color = Color(0xFF151D30),
+        border = BorderStroke(1.dp, Color(0xFF35405A))) {
+        BoxWithConstraints(Modifier.fillMaxSize().padding(16.dp)) {
+            Canvas(Modifier.fillMaxSize()) {
+                val stars = listOf(
+                    Offset(0.08f, 0.20f), Offset(0.25f, 0.45f), Offset(0.43f, 0.15f),
+                    Offset(0.60f, 0.32f), Offset(0.81f, 0.16f), Offset(0.93f, 0.50f),
+                    Offset(0.12f, 0.77f), Offset(0.52f, 0.82f), Offset(0.78f, 0.72f)
+                )
+                stars.forEachIndexed { index, star ->
+                    drawCircle(
+                        color = lavender.copy(alpha = if (index % 3 == 0) 0.34f else 0.16f),
+                        radius = if (index % 3 == 0) 3.dp.toPx() else 2.dp.toPx(),
+                        center = Offset(size.width * star.x, size.height * star.y)
                     )
-                    val hop by transition.animateFloat(
-                        initialValue = 0f,
-                        targetValue = 1f,
-                        animationSpec = infiniteRepeatable(animation = keyframes {
-                            durationMillis = 1400
-                            0f at 0
-                            1f at 300
-                            0f at 650
-                            0f at 1400
-                        }),
-                        label = "토끼 점프"
-                    )
-                    BoxWithConstraints(modifier = Modifier.fillMaxWidth().height(130.dp)) {
-                        val rabbitWidth = 150.dp
-                        val travel = (maxWidth - rabbitWidth).coerceAtLeast(0.dp)
-                        Column(
-                            modifier = Modifier.width(rabbitWidth).height(100.dp)
-                                .offset(x = travel * position, y = 24.dp - 22.dp * hop)
-                                .clickable(enabled = !actionPending, role = Role.Button, onClick = onComplete),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center
-                        ) {
-                            Text("🐇", fontSize = 50.sp)
-                            Text("완전히 종료", fontSize = 17.sp, fontWeight = FontWeight.Bold,
-                                color = Color.White)
-                        }
-                    }
-                } else {
-                    Text("끄더라도 5분 뒤 다시 울립니다.",
-                        color = Color.White.copy(alpha = 0.8f), fontSize = 16.sp)
-                    Spacer(Modifier.height(20.dp))
-                    Button(
-                        onClick = onSilence,
-                        enabled = !actionPending,
-                        modifier = Modifier.fillMaxWidth().height(58.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = background)
-                    ) { Text("알람 끄기", fontSize = 19.sp, fontWeight = FontWeight.Bold) }
                 }
             }
+            val rabbitWidth = 120.dp
+            val travel = (maxWidth - rabbitWidth).coerceAtLeast(0.dp)
+            val goingRight = cycle < 1f
+            val progress = if (goingRight) cycle else 2f - cycle
+            RabbitIllustration(
+                Modifier.width(rabbitWidth).height(100.dp)
+                    .align(Alignment.CenterStart)
+                    .offset(x = travel * progress, y = -24.dp * hop)
+                    .graphicsLayer { scaleX = if (goingRight) 1f else -1f }
+                    .semantics { contentDescription = "좌우로 뛰어다니는 토끼" }
+            )
         }
+    }
+}
+
+@Composable
+private fun RabbitIllustration(modifier: Modifier = Modifier) {
+    Canvas(modifier) {
+        val w = size.width
+        val h = size.height
+        val fur = softWhite
+        val shadow = Color(0xFFD7CFF2)
+        val innerEar = Color(0xFFDBA9C8)
+        drawOval(shadow, topLeft = Offset(w * 0.30f, h * 0.77f), size = Size(w * 0.23f, h * 0.10f))
+        drawOval(shadow, topLeft = Offset(w * 0.65f, h * 0.77f), size = Size(w * 0.23f, h * 0.10f))
+        drawCircle(fur, radius = w * 0.095f, center = Offset(w * 0.23f, h * 0.64f))
+        drawOval(fur, topLeft = Offset(w * 0.23f, h * 0.47f), size = Size(w * 0.55f, h * 0.34f))
+        rotate(-15f, pivot = Offset(w * 0.74f, h * 0.45f)) {
+            drawOval(fur, topLeft = Offset(w * 0.70f, h * 0.06f), size = Size(w * 0.12f, h * 0.43f))
+            drawOval(innerEar, topLeft = Offset(w * 0.735f, h * 0.12f), size = Size(w * 0.05f, h * 0.30f))
+        }
+        rotate(13f, pivot = Offset(w * 0.85f, h * 0.44f)) {
+            drawOval(fur, topLeft = Offset(w * 0.82f, h * 0.03f), size = Size(w * 0.12f, h * 0.45f))
+            drawOval(innerEar, topLeft = Offset(w * 0.855f, h * 0.10f), size = Size(w * 0.05f, h * 0.30f))
+        }
+        drawCircle(fur, radius = w * 0.17f, center = Offset(w * 0.79f, h * 0.56f))
+        drawCircle(Color(0xFF20243A), radius = w * 0.018f, center = Offset(w * 0.85f, h * 0.50f))
+        drawCircle(innerEar, radius = w * 0.025f, center = Offset(w * 0.95f, h * 0.59f))
     }
 }
