@@ -339,7 +339,7 @@ class AlarmPlaybackService : Service() {
                 ALARM_CHANNEL_ID,
                 "Alarms",
                 NotificationManager.IMPORTANCE_HIGH
-            )
+            ).apply { lockscreenVisibility = Notification.VISIBILITY_PUBLIC }
             val manager = getSystemService(NotificationManager::class.java)
             manager?.createNotificationChannel(channel)
         }
@@ -378,14 +378,15 @@ class AlarmPlaybackService : Service() {
             .setContentTitle("LoopMuse 알람")
             .setContentText("$timeText · ${songTitle ?: "알람음"}")
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setOngoing(true)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .setContentIntent(fullScreenPendingIntent)
             .setFullScreenIntent(fullScreenPendingIntent, true)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "알람 끄기 · 5분 뒤 재알람", stopPendingIntent)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "완전히 종료", dismissPendingIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "5분 뒤 재알람", stopPendingIntent)
             .build()
     }
 

@@ -90,7 +90,8 @@ fun AlarmSettingDialog(
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val notificationsBlocked = !manager.areNotificationsEnabled() ||
             (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-                manager.getNotificationChannel(AlarmPlaybackService.ALARM_CHANNEL_ID)?.importance == NotificationManager.IMPORTANCE_NONE)
+                manager.getNotificationChannel(AlarmPlaybackService.ALARM_CHANNEL_ID)
+                    ?.importance?.let { it < NotificationManager.IMPORTANCE_HIGH } == true)
         if (needsNotificationPermission) false else notificationsBlocked
     }
     val scope = rememberCoroutineScope()
@@ -242,7 +243,7 @@ fun AlarmSettingDialog(
                 }
                 if (needsNotificationPermission || needsFullScreenPermission || needsNotificationSettings) {
                     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-                        Text("알람 알림과 잠금 화면 표시를 위해 권한을 허용하세요.", fontSize = 13.sp)
+                        Text("알람 종료 화면과 버튼을 바로 보려면 알림·전체 화면 표시를 허용하세요.", fontSize = 13.sp)
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End,
                             verticalAlignment = Alignment.CenterVertically) {
                             if (needsNotificationPermission) {
@@ -256,7 +257,8 @@ fun AlarmSettingDialog(
                                 TextButton(onClick = {
                                     val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                                     val alarmChannelBlocked = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-                                        manager.getNotificationChannel(AlarmPlaybackService.ALARM_CHANNEL_ID)?.importance == NotificationManager.IMPORTANCE_NONE
+                                        manager.getNotificationChannel(AlarmPlaybackService.ALARM_CHANNEL_ID)
+                                            ?.importance?.let { it < NotificationManager.IMPORTANCE_HIGH } == true
                                     val settingsIntent = when {
                                         alarmChannelBlocked -> Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).apply {
                                             putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
