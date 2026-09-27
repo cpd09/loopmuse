@@ -38,6 +38,15 @@ class MusicPlaybackService : Service() {
     private val binder = LocalBinder()
     private var mediaPlayer: MediaPlayer? = null
     private var currentSong: MusicFile? = null
+    private var playbackStarting = false
+    private var playerGeneration = 0L
+    private data class SuspendedPlayback(
+        val trackId: String?, val positionMs: Long, val temporaryHistorySize: Int = -1
+    )
+    private val likedSuspensions = mutableMapOf<String, SuspendedPlayback>()
+    private var selectionSuspension: SuspendedPlayback? = null
+    private var pendingResumeTrackId: String? = null
+    private var pendingResumePositionMs: Long = 0L
     private var selectedItems: List<SelectionItem> = emptyList()
     
     private var cachedAllSongs: List<MusicFile> = emptyList()
@@ -128,8 +137,23 @@ class MusicPlaybackService : Service() {
                 val set = likedEntities.map { it.fingerprintId }.toSet()
                 _likedFingerprints.value = set
                 if (!isImportingData) {
+                    val likedState = queueManager.getCurrentPlaylist()?.takeIf { it.isLikedFilter }
+                    val resume = likedState?.let {
+                        likedSuspensions[it.id] ?: SuspendedPlayback(it.queue.getOrNull(it.currentIndex),
+                            it.likedResumePositionMs)
+                    }
                     queueManager.setLikedFingerprints(set)
-                    syncWithQueueManager()
+                    if (likedState != null && queueManager.getCurrentPlaylist()?.isLikedFilter == false) {
+                        likedSuspensions.remove(likedState.id)
+                        if (resume != null && currentSong?.id == resume.trackId &&
+                            likedState.likedCurrentId == resume.trackId &&
+                            likedState.temporaryHistory.size == resume.temporaryHistorySize) {
+                            syncWithQueueManager()
+                        } else resumeUnderlyingPlayback(resume)
+                    } else {
+                        alignLikedPlayback()
+                        syncWithQueueManager()
+                    }
                 }
             }
         }
@@ -245,6 +269,9 @@ class MusicPlaybackService : Service() {
         selectedItems = items
         saveSelectedItems()
         stopCurrentSong()
+        likedSuspensions.clear()
+        selectionSuspension = null
+        pendingResumeTrackId = null
         // A restored playlist must survive reselecting its music folder.
         queueManager.switchPlaylist("ALL")
         queueManager.clearSelection() 
@@ -312,6 +339,9 @@ class MusicPlaybackService : Service() {
 
     private fun reloadUserData() {
         stopCurrentSong()
+        likedSuspensions.clear()
+        selectionSuspension = null
+        pendingResumeTrackId = null
         selectedItems = emptyList()
         loadSelectedItems()
         queueManager = PlaybackQueueManager(this)
@@ -375,7 +405,12 @@ class MusicPlaybackService : Service() {
     fun switchPlaylist(id: String) {
         if (queueManager.getCurrentPlaylist()?.id == id || queueManager.getAllPlaylists().none { it.id == id }) return
         stopCurrentSong()
+        pendingResumeTrackId = null
+        selectionSuspension = null
         queueManager.switchPlaylist(id)
+        queueManager.setLikedFingerprints(_likedFingerprints.value)
+        if (queueManager.getCurrentPlaylist()?.isLikedFilter == false) likedSuspensions.remove(id)
+        alignLikedPlayback()
         syncWithQueueManager()
     }
     fun addCustomPlaylist(name: String, ids: List<String>) { queueManager.addCustomPlaylist(name, ids); syncWithQueueManager() }
@@ -383,9 +418,62 @@ class MusicPlaybackService : Service() {
     fun deletePlaylist(id: String) { queueManager.deletePlaylist(id); syncWithQueueManager() }
 
     fun toggleLikedFilter(): Boolean {
-        val result = queueManager.toggleLikedFilter()
-        syncWithQueueManager()
+        val previous = queueManager.getCurrentPlaylist() ?: return false
+        val suspended = if (previous.isLikedFilter) {
+            likedSuspensions[previous.id] ?: SuspendedPlayback(
+                previous.queue.getOrNull(previous.currentIndex), previous.likedResumePositionMs)
+        } else capturePlayback().also { likedSuspensions[previous.id] = it }
+        val sameTrackUnchanged = previous.isLikedFilter && currentSong?.id == suspended.trackId &&
+            previous.likedCurrentId == suspended.trackId &&
+            previous.temporaryHistory.size == suspended.temporaryHistorySize
+        val result = queueManager.toggleLikedFilter(suspended.positionMs)
+        if (!result) {
+            if (!previous.isLikedFilter) likedSuspensions.remove(previous.id)
+            return false
+        }
+        if (previous.isLikedFilter) {
+            likedSuspensions.remove(previous.id)
+            if (sameTrackUnchanged) syncWithQueueManager()
+            else resumeUnderlyingPlayback(suspended)
+        } else {
+            alignLikedPlayback()
+            syncWithQueueManager()
+        }
         return result
+    }
+
+    private fun capturePlayback(): SuspendedPlayback = SuspendedPlayback(
+        queueManager.getCurrentTrack()?.id,
+        runCatching { mediaPlayer?.currentPosition?.toLong() ?: 0L }.getOrDefault(0L),
+        queueManager.getCurrentPlaylist()?.temporaryHistory?.size ?: -1
+    )
+
+    private fun resumeUnderlyingPlayback(suspended: SuspendedPlayback?) {
+        val continuePlaying = _isPlaying.value || playbackStarting
+        stopCurrentSong()
+        pendingResumeTrackId = null
+        pendingResumePositionMs = 0L
+        val track = queueManager.getCurrentTrack()
+        if (track != null) {
+            val position = suspended?.positionMs?.takeIf { suspended.trackId == track.id } ?: 0L
+            if (continuePlaying) playSong(track, position)
+            else {
+                pendingResumeTrackId = track.id
+                pendingResumePositionMs = position
+            }
+        }
+        syncWithQueueManager()
+    }
+
+    private fun alignLikedPlayback() {
+        val state = queueManager.getCurrentPlaylist() ?: return
+        if (!state.isLikedFilter || queueManager.isSelectionPlayback) return
+        val selected = queueManager.getCurrentTrack() ?: return
+        if (selected.fingerprintId in _likedFingerprints.value) return
+        val wasPlaying = _isPlaying.value
+        val next = queueManager.getNextTrack(isManual = true)
+        if (currentSong != null) stopCurrentSong()
+        if (wasPlaying && next != null) playSong(next)
     }
 
     fun searchWithFilters(
@@ -472,23 +560,33 @@ class MusicPlaybackService : Service() {
     fun toggleSelectionMode() {
         val enteringSelectionMode = !queueManager.isSelectionMode
         if (enteringSelectionMode) {
+            selectionSuspension = capturePlayback()
             val songToSelect = queueManager.getCurrentTrack()
             stopCurrentSong()
             queueManager.toggleSelectionMode()
             songToSelect?.let { queueManager.toggleSelection(it.id) }
         } else {
             queueManager.toggleSelectionMode()
+            resumeUnderlyingPlayback(selectionSuspension)
+            selectionSuspension = null
+            return
         }
         syncWithQueueManager()
     }
 
     fun toggleSelection(id: String) {
         if (!queueManager.isSelectionMode) {
+            selectionSuspension = capturePlayback()
             stopCurrentSong()
             queueManager.toggleSelectionMode()
         }
         val wasSelectionPlayback = queueManager.isSelectionPlayback
         queueManager.toggleSelection(id)
+        if (!queueManager.isSelectionMode) {
+            resumeUnderlyingPlayback(selectionSuspension)
+            selectionSuspension = null
+            return
+        }
         if (wasSelectionPlayback && !queueManager.isSelectionPlayback) stopCurrentSong()
         syncWithQueueManager()
     }
@@ -547,12 +645,13 @@ class MusicPlaybackService : Service() {
     fun startSelectionPlayback() {
         val selected = queueManager.selectedIds
         val firstSelected = queueManager.getActiveQueueSongs().firstOrNull { it.id in selected } ?: return
-        val track = queueManager.playTrackById(firstSelected.id) ?: return
-        queueManager.isSelectionPlayback = playSong(track)
+        val track = queueManager.startSelectionPlayback(firstSelected.id) ?: return
+        if (!playSong(track)) queueManager.isSelectionPlayback = false
         syncWithQueueManager()
     }
 
     fun selectAll() { 
+        if (!queueManager.isSelectionMode) selectionSuspension = capturePlayback()
         stopCurrentSong()
         queueManager.selectAll()
         // Automatically enter selection mode when 'Select All' is clicked
@@ -560,10 +659,22 @@ class MusicPlaybackService : Service() {
         queueManager.isSelectionMode = true
         syncWithQueueManager() 
     }
-    fun clearSelection() { queueManager.clearSelection(); syncWithQueueManager() }
+    fun clearSelection() {
+        if (!queueManager.isSelectionMode && selectionSuspension == null) {
+            queueManager.clearSelection()
+            syncWithQueueManager()
+            return
+        }
+        queueManager.clearSelection()
+        resumeUnderlyingPlayback(selectionSuspension)
+        selectionSuspension = null
+    }
 
     fun toggleSort(criteria: SortCriteria) { queueManager.toggleSort(criteria); syncWithQueueManager() }
     fun playTrackById(id: String) { 
+        val state = queueManager.getCurrentPlaylist()
+        if (state?.isLikedFilter == true && !queueManager.isSelectionPlayback &&
+            queueManager.getActiveQueueSongs().firstOrNull { it.id == id }?.fingerprintId !in _likedFingerprints.value) return
         queueManager.playTrackById(id)?.let { 
             playSong(it)
             syncWithQueueManager()
@@ -572,8 +683,12 @@ class MusicPlaybackService : Service() {
     fun seekTo(position: Long) { mediaPlayer?.seekTo(position.toInt()); _currentPosition.value = position }
     fun getSortInfo(): Pair<SortCriteria, SortOrder> { val s = queueManager.getCurrentPlaylist(); return (s?.sortCriteria ?: SortCriteria.DATE) to (s?.sortOrder ?: SortOrder.DESCENDING) }
 
-    private fun playSong(musicFile: MusicFile): Boolean {
+    private fun playSong(musicFile: MusicFile, startPositionMs: Long = 0L): Boolean {
         return try {
+            val generation = ++playerGeneration
+            pendingResumeTrackId = null
+            pendingResumePositionMs = 0L
+            playbackStarting = true
             mediaPlayer?.let { if (it.isPlaying) it.stop(); it.release() }
             mediaPlayer = null
             currentSong = musicFile
@@ -583,17 +698,23 @@ class MusicPlaybackService : Service() {
                 setDataSource(musicFile.path)
                 prepareAsync()
                 setOnPreparedListener {
-                    // Taste Mode: Start at 30 seconds
-                    if (_isTasteMode.value && it.duration > 30000) {
+                    if (generation != playerGeneration) return@setOnPreparedListener
+                    playbackStarting = false
+                    if (startPositionMs > 0L) {
+                        it.seekTo(startPositionMs.coerceAtMost((it.duration - 1).coerceAtLeast(0).toLong()).toInt())
+                    } else if (_isTasteMode.value && it.duration > 30000) {
                         it.seekTo(30000)
                     }
                     it.start()
                     _isPlaying.value = true
+                    queueManager.recordStartedTrack(musicFile.id)
+                    syncWithQueueManager()
                     _duration.value = it.duration.toLong()
                     updateMediaSession()
                     startForeground(NOTIFICATION_ID, createNotification())
                 }
                 setOnCompletionListener {
+                    if (generation != playerGeneration) return@setOnCompletionListener
                     _isPlaying.value = false
                     serviceScope.launch {
                         val nextTrack = queueManager.getNextTrack(isManual = false)
@@ -605,10 +726,16 @@ class MusicPlaybackService : Service() {
                         }
                     }
                 }
-                setOnErrorListener { _, _, _ -> _isPlaying.value = false; false }
+                setOnErrorListener { _, _, _ ->
+                    if (generation == playerGeneration) {
+                        playbackStarting = false
+                        _isPlaying.value = false
+                    }
+                    false
+                }
             }
             true
-        } catch (_: Exception) { false }
+        } catch (_: Exception) { playbackStarting = false; false }
     }
     
     private fun togglePlayPause() {
@@ -616,8 +743,11 @@ class MusicPlaybackService : Service() {
             startSelectionPlayback()
         } else {
             mediaPlayer?.let { if (it.isPlaying) pausePlayback() else resumePlayback() } ?: run {
-                val track = queueManager.getCurrentTrack() ?: queueManager.getNextTrack()
-                track?.let { playSong(it) }
+                val track = queueManager.getPlayableCurrentOrNextTrack()
+                track?.let {
+                    val position = if (it.id == pendingResumeTrackId) pendingResumePositionMs else 0L
+                    playSong(it, position)
+                }
             }
         }
     }
@@ -645,8 +775,10 @@ class MusicPlaybackService : Service() {
     }
     
     private fun stopCurrentSong() {
+        playerGeneration++
         mediaPlayer?.let { if (it.isPlaying) it.stop(); it.release() }
         mediaPlayer = null
+        playbackStarting = false
         _isPlaying.value = false
         currentSong = null
         _currentTrack.value = null
@@ -705,8 +837,18 @@ class MusicPlaybackService : Service() {
     
     fun clearPlaybackHistory() { 
         stopCurrentSong()
+        likedSuspensions.clear()
+        selectionSuspension = null
+        pendingResumeTrackId = null
         queueManager.localReset()
         syncWithQueueManager() 
     }
-    fun globalReset() { stopCurrentSong(); queueManager.globalReset(); syncWithQueueManager() }
+    fun globalReset() {
+        stopCurrentSong()
+        likedSuspensions.clear()
+        selectionSuspension = null
+        pendingResumeTrackId = null
+        queueManager.globalReset()
+        syncWithQueueManager()
+    }
 }

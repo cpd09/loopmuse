@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.app.ActivityOptions
 import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
@@ -47,6 +48,27 @@ class AlarmPlaybackService : Service() {
         const val ACTION_SNOOZE_FAILED = "com.example.loopmuse.action.SNOOZE_FAILED"
         @Volatile var activeAlarmId = 0
             private set
+
+        private data class RingingAlarm(
+            val id: Int,
+            val hour: Int,
+            val minute: Int,
+            val songTitle: String?,
+            val isSnooze: Boolean
+        )
+
+        @Volatile private var ringingAlarm: RingingAlarm? = null
+
+        fun activeScreenIntent(context: Context): Intent? = ringingAlarm?.let { alarm ->
+            Intent(context, AlarmRingingActivity::class.java).apply {
+                putExtra("ALARM_ID", alarm.id)
+                putExtra("ALARM_HOUR", alarm.hour)
+                putExtra("ALARM_MINUTE", alarm.minute)
+                putExtra("SONG_TITLE", alarm.songTitle)
+                putExtra("IS_SNOOZE", alarm.isSnooze)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            }
+        }
     }
 
     override fun onCreate() {
@@ -102,6 +124,13 @@ class AlarmPlaybackService : Service() {
         currentAlarmId = alarmId
         activeAlarmId = alarmId
         isSnoozeRing = intent.getBooleanExtra("IS_SNOOZE", false)
+        ringingAlarm = RingingAlarm(
+            alarmId,
+            intent.getIntExtra("ALARM_HOUR", 0),
+            intent.getIntExtra("ALARM_MINUTE", 0),
+            intent.getStringExtra("SONG_TITLE"),
+            isSnoozeRing
+        )
         val songPath = intent.getStringExtra("SONG_PATH")
         val startPositionMs = intent.getLongExtra("START_POSITION", 0L)
         val endPositionMs = intent.getLongExtra("END_POSITION", 0L)
@@ -276,6 +305,7 @@ class AlarmPlaybackService : Service() {
         releasePlayback()
         currentAlarmId = 0
         activeAlarmId = 0
+        ringingAlarm = null
         isSnoozeRing = false
         sendBroadcast(Intent(finishAction).setPackage(packageName).putExtra("ALARM_ID", finishedId))
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -293,6 +323,7 @@ class AlarmPlaybackService : Service() {
             releasePlayback()
             currentAlarmId = 0
             activeAlarmId = 0
+            ringingAlarm = null
             isSnoozeRing = false
             sendBroadcast(Intent(ACTION_ALARM_FINISHED).setPackage(packageName).putExtra("ALARM_ID", finishedId))
         }
@@ -322,9 +353,24 @@ class AlarmPlaybackService : Service() {
         val stopPendingIntent = PendingIntent.getService(this, alarmId, stopIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
-        val fullScreenIntent = alarmScreenIntent(alarmId, hour, minute, songTitle, isSnoozeRing)
-        val fullScreenPendingIntent = PendingIntent.getActivity(this, alarmId, fullScreenIntent,
+        val dismissIntent = Intent(this, AlarmPlaybackService::class.java).apply {
+            action = ACTION_DISMISS_SNOOZE
+            putExtra("ALARM_ID", alarmId)
+        }
+        val dismissPendingIntent = PendingIntent.getService(this, alarmId, dismissIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+
+        val fullScreenIntent = alarmScreenIntent(alarmId, hour, minute, songTitle, isSnoozeRing)
+        val activityOptions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            ActivityOptions.makeBasic().apply {
+                pendingIntentCreatorBackgroundActivityStartMode = ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+            }.toBundle()
+        } else null
+        val fullScreenPendingIntent = PendingIntent.getActivity(
+            this, alarmId, fullScreenIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            activityOptions
+        )
 
         val timeText = String.format(Locale.KOREA, "%02d:%02d", hour, minute)
 
@@ -339,6 +385,7 @@ class AlarmPlaybackService : Service() {
             .setContentIntent(fullScreenPendingIntent)
             .setFullScreenIntent(fullScreenPendingIntent, true)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "알람 끄기 · 5분 뒤 재알람", stopPendingIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "완전히 종료", dismissPendingIntent)
             .build()
     }
 

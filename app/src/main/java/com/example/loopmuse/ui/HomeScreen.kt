@@ -7,6 +7,7 @@ import android.os.Build
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.io.File
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
@@ -161,6 +162,9 @@ fun HomeScreen() {
     var showQueueEndedDialog by remember { mutableStateOf(value = false) }
     var songForEdit by remember { mutableStateOf<MusicFile?>(null) }
     var showAlarmDialog by remember { mutableStateOf(false) }
+    val backupManager = remember(context) { BackupManager(context.applicationContext) }
+    val backupPromptMarker = remember(context) { File(context.noBackupFilesDir, "backup_setup_prompt_v2") }
+    var showBackupSetup by remember { mutableStateOf(false) }
 
     LaunchedEffect(isServiceConnected) {
         if (isServiceConnected) {
@@ -169,6 +173,13 @@ fun HomeScreen() {
     }
     
     val hasPermissions by remember { derivedStateOf { storagePermissionState.status.isGranted } }
+
+    LaunchedEffect(hasPermissions, isServiceConnected) {
+        if (isServiceConnected && (backupManager.isSetupPending() ||
+                (hasPermissions && !backupPromptMarker.exists() && !backupManager.hasBackupFolder()))) {
+            showBackupSetup = true
+        }
+    }
     
     LaunchedEffect(Unit) { musicServiceConnection.bindService() }
     DisposableEffect(Unit) { onDispose { musicServiceConnection.unbindService() } }
@@ -176,8 +187,7 @@ fun HomeScreen() {
     if (showSettingsScreen) {
         SettingsScreen(
             onBack = { showSettingsScreen = false },
-            onRestore = { uri, mode -> musicServiceConnection.restoreUserData(uri, mode) },
-            onFresh = { musicServiceConnection.startFreshUserData() }
+            onRestore = { uri, mode -> musicServiceConnection.restoreUserData(uri, mode) }
         )
     } else if (showLoungeScreen) {
         CommunityLoungeScreen(
@@ -340,7 +350,12 @@ fun HomeScreen() {
                             songs = allSongsInQueue, currentTrack = currentTrack, playlistState = playlistState,
                             playedSongIds = playedSongIds, selectedIds = selectedIds, likedFingerprints = likedFingerprints,
                             onSongClick = { song ->
-                                musicServiceConnection.onPlaylistSongClick(song.id)
+                                if (!isSelectionMode && playlistState?.isLikedFilter == true &&
+                                    song.fingerprintId !in likedFingerprints) {
+                                    Toast.makeText(context, "좋아요 곡만 재생 중입니다. 음표를 눌러 좋아요에 추가해 주세요.", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    musicServiceConnection.onPlaylistSongClick(song.id)
+                                }
                             },
                             onLikeClick = { fingerprintId ->
                                 musicServiceConnection.toggleLike(fingerprintId)
@@ -855,6 +870,17 @@ fun HomeScreen() {
             dismissButton = { TextButton(onClick = { showExitDialog = false }) { Text("취소") } }
         )
     }
+    if (showBackupSetup) BackupSetupDialog(
+        onFinish = {
+            backupPromptMarker.writeText("done")
+            showBackupSetup = false
+        },
+        onLater = {
+            backupPromptMarker.writeText("later")
+            showBackupSetup = false
+        },
+        onRestore = { uri, mode -> musicServiceConnection.restoreUserData(uri, mode) }
+    )
 }
 
 @Composable
@@ -908,8 +934,7 @@ fun LikedFilterOptionButton(isLiked: Boolean, enabled: Boolean = true, onClick: 
             Icon(
                 imageVector = Icons.Default.MusicNote,
                 contentDescription = "좋아요 곡만 재생",
-                tint = if (isLiked) Color.Red
-                       else if (enabled) Color(0xFFFF9800)
+                tint = if (isLiked || enabled) Color.Red
                        else Color.Gray.copy(alpha = 0.2f),
                 modifier = Modifier.size(20.dp)
             )
@@ -1317,7 +1342,7 @@ fun PlaylistView(
                             Icon(
                                 imageVector = Icons.Default.MusicNote, 
                                 contentDescription = "좋아요", 
-                                tint = if (isLiked) Color.Red else Color(0xFFFF9800).copy(alpha = alpha), 
+                                tint = if (isLiked) Color.Red else Color(0xFF8BC34A).copy(alpha = alpha),
                                 modifier = Modifier.size(20.dp)
                             )
                         }

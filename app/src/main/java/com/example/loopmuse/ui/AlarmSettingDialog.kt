@@ -52,6 +52,7 @@ import com.example.loopmuse.data.MusicFile
 import com.example.loopmuse.data.db.AlarmEntity
 import com.example.loopmuse.data.db.AppDatabase
 import com.example.loopmuse.service.MusicServiceConnection
+import com.example.loopmuse.service.alarm.AlarmPlaybackService
 import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
@@ -84,6 +85,13 @@ fun AlarmSettingDialog(
     val needsFullScreenPermission = permissionRefresh.let {
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
             !(context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).canUseFullScreenIntent()
+    }
+    val needsNotificationSettings = permissionRefresh.let {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val notificationsBlocked = !manager.areNotificationsEnabled() ||
+            (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                manager.getNotificationChannel(AlarmPlaybackService.ALARM_CHANNEL_ID)?.importance == NotificationManager.IMPORTANCE_NONE)
+        if (needsNotificationPermission) false else notificationsBlocked
     }
     val scope = rememberCoroutineScope()
     val alarmListState = rememberLazyListState()
@@ -232,22 +240,46 @@ fun AlarmSettingDialog(
                         Icon(Icons.Default.Close, contentDescription = "닫기")
                     }
                 }
-                if (needsNotificationPermission || needsFullScreenPermission) {
-                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text("알람 화면 권한", fontSize = 11.sp, modifier = Modifier.weight(1f))
-                        if (needsNotificationPermission) {
-                            TextButton(onClick = {
-                                notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-                            }, contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)) {
-                                Text("알림 허용", fontSize = 11.sp)
+                if (needsNotificationPermission || needsFullScreenPermission || needsNotificationSettings) {
+                    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                        Text("알람 알림과 잠금 화면 표시를 위해 권한을 허용하세요.", fontSize = 13.sp)
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically) {
+                            if (needsNotificationPermission) {
+                                TextButton(onClick = {
+                                    notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                                }, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)) {
+                                    Text("알림 허용", fontSize = 12.sp)
+                                }
                             }
-                        }
-                        if (needsFullScreenPermission) {
-                            TextButton(onClick = {
-                                context.startActivity(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
-                                    Uri.parse("package:${context.packageName}")))
-                            }, contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)) {
-                                Text("전체 화면 허용", fontSize = 11.sp)
+                            if (needsNotificationSettings) {
+                                TextButton(onClick = {
+                                    val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                                    val alarmChannelBlocked = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                                        manager.getNotificationChannel(AlarmPlaybackService.ALARM_CHANNEL_ID)?.importance == NotificationManager.IMPORTANCE_NONE
+                                    val settingsIntent = when {
+                                        alarmChannelBlocked -> Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).apply {
+                                            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                            putExtra(Settings.EXTRA_CHANNEL_ID, AlarmPlaybackService.ALARM_CHANNEL_ID)
+                                        }
+                                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.O -> Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                        }
+                                        else -> Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                            Uri.parse("package:${context.packageName}"))
+                                    }
+                                    context.startActivity(settingsIntent)
+                                }, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)) {
+                                    Text("알림 설정", fontSize = 12.sp)
+                                }
+                            }
+                            if (needsFullScreenPermission) {
+                                TextButton(onClick = {
+                                    context.startActivity(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
+                                        Uri.parse("package:${context.packageName}")))
+                                }, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)) {
+                                    Text("전체 화면 허용", fontSize = 12.sp)
+                                }
                             }
                         }
                     }

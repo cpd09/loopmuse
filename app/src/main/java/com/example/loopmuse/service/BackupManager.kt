@@ -55,12 +55,20 @@ data class BackupInfo(
 
 data class LocalDataInfo(val songs: Int, val playlists: Int, val alarms: Int)
 
+data class BackupFolderCandidate(
+    val treeUri: Uri,
+    val subfolder: String?,
+    val path: String,
+    val backups: List<BackupInfo>
+)
+
 /** Internal Room remains the live store. This class exports verified, versioned snapshots. */
 class BackupManager(private val context: Context, private val database: AppDatabase = AppDatabase.getDatabase(context)) {
     companion object {
         private val operationMutex = Mutex()
         const val CURRENT_FILE = "loopmuse_current.json"
         const val RECOVERY_FOLDER = "LoopMuse_Recovery"
+        const val RECOMMENDED_FOLDER = "LoopMuse"
         private const val PREVIOUS_FILE = "loopmuse_previous.json"
     }
 
@@ -84,9 +92,11 @@ class BackupManager(private val context: Context, private val database: AppDatab
     private data class Decoded(val payload: Payload, val createdAt: Long, val legacy: Boolean)
 
     fun hasBackupFolder(): Boolean = savedFolderUri() != null
+    fun isSetupPending(): Boolean = prefs.getBoolean("setup_pending", false)
+    fun cancelBackupFolderSetup() { prefs.edit().remove("setup_pending").commit() }
     fun backupFolderPath(): String? = prefs.getString("folder_label", null)
         ?: prefs.getString("folder_uri", null)?.let { displayFolderPath(Uri.parse(it)) }
-    suspend fun listConfiguredBackups(): List<BackupInfo> = savedFolderUri()?.let { listBackups(it) } ?: emptyList()
+    suspend fun listConfiguredBackups(): List<BackupInfo> = savedFolderUri()?.let { listBackups(it, savedSubfolder()) } ?: emptyList()
     fun lastBackupTime(): Long = prefs.getLong("last_success", 0L)
     fun lastError(): String? = prefs.getString("last_error", null)
     fun lastAlarmWarning(): String? = prefs.getString("alarm_warning", null)
@@ -97,11 +107,30 @@ class BackupManager(private val context: Context, private val database: AppDatab
             database.alarmDao().getAllAlarmsOnce().size)
     }
 
-    private fun savedFolderUri(): Uri? {
+    suspend fun matchesCurrentData(uri: Uri): Boolean = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val decoded = decode(readText(uri))
+            !decoded.legacy && JsonParser.parseString(gson.toJson(capture())) ==
+                JsonParser.parseString(gson.toJson(decoded.payload))
+        }
+    }
+
+    private fun storedFolderUri(): Uri? {
         val uri = prefs.getString("folder_uri", null)?.let(Uri::parse) ?: return null
         return uri.takeIf { candidate -> context.contentResolver.persistedUriPermissions.any {
             it.uri == candidate && it.isReadPermission && it.isWritePermission
         } }
+    }
+
+    private fun savedFolderUri(): Uri? = if (isSetupPending()) null else storedFolderUri()
+
+    private fun savedSubfolder(): String? = prefs.getString("folder_subfolder", null)
+
+    private fun backupDirectory(treeUri: Uri, subfolder: String?, create: Boolean = false): DocumentFile? {
+        val tree = DocumentFile.fromTreeUri(context, treeUri) ?: return null
+        if (subfolder == null) return tree
+        return tree.findFile(subfolder)?.takeIf { it.isDirectory }
+            ?: if (create) tree.createDirectory(subfolder) else null
     }
 
     fun displayFolderPath(uri: Uri): String {
@@ -120,23 +149,39 @@ class BackupManager(private val context: Context, private val database: AppDatab
         return if (folderName.isNullOrBlank()) provider else "$provider / $folderName"
     }
 
-    suspend fun listBackups(treeUri: Uri): List<BackupInfo> = withContext(Dispatchers.IO) {
-        val folder = DocumentFile.fromTreeUri(context, treeUri) ?: error("선택한 폴더를 열 수 없습니다.")
+    fun displayFilePath(uri: Uri): String {
+        if (uri.scheme == "file") return uri.path ?: uri.toString()
+        val documentId = runCatching { DocumentsContract.getDocumentId(uri) }.getOrNull()
+        if (uri.authority == "com.android.externalstorage.documents" && documentId != null) {
+            val volume = documentId.substringBefore(':')
+            val relative = documentId.substringAfter(':', "").trim('/')
+            val root = if (volume == "primary") "내부 저장소" else "외장 저장소 ($volume)"
+            return if (relative.isEmpty()) root else "$root/$relative"
+        }
+        // Other document providers do not expose a filesystem path; the URI is their full identifier.
+        return uri.toString()
+    }
+
+    fun sameBackupFile(first: Uri, second: Uri): Boolean =
+        sameDocument(first, second) || displayFilePath(first) == displayFilePath(second)
+
+    suspend fun listBackups(treeUri: Uri, subfolder: String? = null): List<BackupInfo> = withContext(Dispatchers.IO) {
+        val folder = backupDirectory(treeUri, subfolder) ?: return@withContext emptyList()
         folder.listFiles().asSequence()
             .filter { it.isFile && (it.name?.startsWith("loopmuse-") == true || it.name?.startsWith("loopmuse_pending-") == true || it.name == "loopmuse_backup.json" || it.name == CURRENT_FILE) && it.name?.endsWith(".json") == true }
             .map { file -> inspectOrInvalid(file) }
             .sortedWith(compareByDescending<BackupInfo> { it.kind == BackupKind.CURRENT }.thenByDescending { it.createdAt }).toList()
     }
 
-    suspend fun listRecoveryBackups(treeUri: Uri): List<BackupInfo> = withContext(Dispatchers.IO) {
-        val folder = DocumentFile.fromTreeUri(context, treeUri) ?: return@withContext emptyList()
+    suspend fun listRecoveryBackups(treeUri: Uri, subfolder: String? = null): List<BackupInfo> = withContext(Dispatchers.IO) {
+        val folder = backupDirectory(treeUri, subfolder) ?: return@withContext emptyList()
         folder.findFile(RECOVERY_FOLDER)?.takeIf { it.isDirectory }?.listFiles().orEmpty().asSequence()
             .filter { it.isFile && it.name?.endsWith(".json") == true }
             .map { file -> inspectOrInvalid(file).copy(kind = BackupKind.RECOVERY) }
             .sortedByDescending { it.createdAt }.toList()
     }
 
-    suspend fun listConfiguredRecoveryBackups(): List<BackupInfo> = savedFolderUri()?.let { listRecoveryBackups(it) } ?: emptyList()
+    suspend fun listConfiguredRecoveryBackups(): List<BackupInfo> = savedFolderUri()?.let { listRecoveryBackups(it, savedSubfolder()) } ?: emptyList()
 
     suspend fun inspect(uri: Uri): BackupInfo = withContext(Dispatchers.IO) {
         inspectInternal(uri, DocumentFile.fromSingleUri(context, uri)?.name ?: "백업 파일")
@@ -153,7 +198,7 @@ class BackupManager(private val context: Context, private val database: AppDatab
 
     suspend fun deleteBackup(info: BackupInfo, treeUri: Uri? = null): Boolean = withContext(Dispatchers.IO) {
         mutex.withLock {
-            require(info.kind != BackupKind.CURRENT && info.name != CURRENT_FILE) { "현재 자동 백업 파일은 삭제할 수 없습니다." }
+            require(!isActiveBackupFile(info.uri)) { "현재 자동 백업 파일은 삭제할 수 없습니다." }
             if (info.uri.scheme == "file") {
                 val file = File(info.uri.path ?: "")
                 require(file.parentFile?.canonicalPath == context.filesDir.canonicalPath &&
@@ -161,9 +206,10 @@ class BackupManager(private val context: Context, private val database: AppDatab
                 return@withLock file.delete()
             }
             val folderUri = treeUri ?: savedFolderUri() ?: error("백업 폴더를 다시 선택해 주세요.")
-            val folder = DocumentFile.fromTreeUri(context, folderUri) ?: error("백업 폴더를 열 수 없습니다.")
+            val folder = backupDirectory(folderUri, if (treeUri == null) savedSubfolder() else null)
+                ?: error("백업 폴더를 열 수 없습니다.")
             val inRoot = folder.listFiles().firstOrNull { it.isFile && it.uri == info.uri &&
-                it.name != CURRENT_FILE && it.name?.endsWith(".json") == true &&
+                it.name?.endsWith(".json") == true &&
                 (it.name?.startsWith("loopmuse-") == true || it.name?.startsWith("loopmuse_pending-") == true || it.name == "loopmuse_backup.json") }
             val inRecovery = folder.findFile(RECOVERY_FOLDER)?.takeIf { it.isDirectory }?.listFiles()?.firstOrNull {
                 it.isFile && it.uri == info.uri && it.name?.endsWith(".json") == true
@@ -171,6 +217,26 @@ class BackupManager(private val context: Context, private val database: AppDatab
             val file = inRoot ?: inRecovery ?: error("선택한 폴더의 백업 파일이 아닙니다.")
             file.delete()
         }
+    }
+
+    suspend fun deletePickedBackup(info: BackupInfo): Boolean = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            require(!isActiveBackupFile(info.uri)) {
+                "현재 자동 백업 파일은 삭제할 수 없습니다."
+            }
+            require(info.valid && DocumentsContract.isDocumentUri(context, info.uri)) {
+                "선택한 백업 파일을 삭제할 수 없습니다."
+            }
+            val file = DocumentFile.fromSingleUri(context, info.uri)
+                ?: error("선택한 파일을 열 수 없습니다.")
+            require(file.isFile && file.name == info.name) { "선택한 백업 파일이 아닙니다." }
+            file.delete()
+        }
+    }
+
+    private fun isActiveBackupFile(uri: Uri): Boolean {
+        val active = savedFolderUri()?.let { backupDirectory(it, savedSubfolder())?.findFile(CURRENT_FILE) }
+        return active != null && sameBackupFile(active.uri, uri)
     }
 
     private fun inspectOrInvalid(file: DocumentFile): BackupInfo =
@@ -194,22 +260,183 @@ class BackupManager(private val context: Context, private val database: AppDatab
         else -> BackupKind.OLDER
     }
 
-    suspend fun selectFolderAndBackup(uri: Uri): BackupInfo = withContext(Dispatchers.IO) {
-        context.contentResolver.takePersistableUriPermission(uri,
-            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-        val info = mutex.withLock { writeBackup(uri, "loopmuse", true) }
-        check(prefs.edit().putString("folder_uri", uri.toString())
-            .putString("folder_label", displayFolderPath(uri)).commit()) { "백업 폴더 설정을 저장하지 못했습니다." }
-        info
+    /** Grant access and inspect a folder without changing the active backup or writing a file. */
+    suspend fun prepareBackupFolder(uri: Uri, recommended: Boolean,
+                                    scanBackups: Boolean = true): BackupFolderCandidate = withContext(Dispatchers.IO) {
+        val alreadyPending = mutex.withLock {
+            val wasPending = isSetupPending()
+            check(prefs.edit().putBoolean("setup_pending", true).commit()) { "백업 설정을 시작하지 못했습니다." }
+            wasPending
+        }
+        try {
+            context.contentResolver.takePersistableUriPermission(uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            val isDocuments = uri.authority == "com.android.externalstorage.documents" &&
+                runCatching { DocumentsContract.getTreeDocumentId(uri) }.getOrNull() == "primary:Documents"
+            val subfolder = if (recommended && isDocuments) RECOMMENDED_FOLDER else null
+            val path = displayFolderPath(uri) + if (subfolder == null) "" else "/$subfolder"
+            val backups = if (scanBackups) listBackups(uri, subfolder) + listRecoveryBackups(uri, subfolder)
+                else emptyList()
+            BackupFolderCandidate(uri, subfolder, path, backups)
+        } catch (e: Exception) {
+            if (!alreadyPending) cancelBackupFolderSetup()
+            throw e
+        }
+    }
+
+    /** Call only after the user has decided whether to restore or keep their current data. */
+    suspend fun activateBackupFolder(candidate: BackupFolderCandidate): BackupInfo = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val folder = backupDirectory(candidate.treeUri, candidate.subfolder, create = true)
+                ?: error("백업 폴더를 만들 수 없습니다.")
+            folder.findFile(CURRENT_FILE)?.takeIf { it.isFile }?.let { existing ->
+                    // Preserve the discovered backup beyond the single rotating previous copy.
+                    val recovery = recoveryFolder(folder)
+                    val name = "loopmuse-before-setup-${System.currentTimeMillis()}-${UUID.randomUUID().toString().take(8)}.json"
+                    val archive = recovery.createFile("application/json", name)
+                        ?: error("기존 백업 보관 파일을 만들지 못했습니다.")
+                    try {
+                        val bytes = readBytes(existing.uri)
+                        context.contentResolver.openOutputStream(archive.uri, "wt")?.use { it.write(bytes) }
+                            ?: error("기존 백업을 보관할 수 없습니다.")
+                        check(readBytes(archive.uri).contentEquals(bytes)) { "기존 백업 확인에 실패했습니다." }
+                    } catch (e: Exception) { archive.delete(); throw e }
+            }
+            val info = writeBackup(candidate.treeUri, "loopmuse", true, candidate.subfolder)
+            check(prefs.edit().putString("folder_uri", candidate.treeUri.toString())
+                .putString("folder_label", candidate.path)
+                .remove("setup_pending")
+                .apply { if (candidate.subfolder == null) remove("folder_subfolder") else putString("folder_subfolder", candidate.subfolder) }
+                .commit()) { "백업 폴더 설정을 저장하지 못했습니다." }
+            info
+        }
+    }
+
+    /** Change the automatic backup location after the user selects and saves a folder. */
+    suspend fun saveBackupLocation(candidate: BackupFolderCandidate): BackupInfo = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            check(isSetupPending()) { "백업 위치를 다시 선택해 주세요." }
+            val destination = backupDirectory(candidate.treeUri, candidate.subfolder, create = true)
+                ?: error("선택한 백업 폴더를 열 수 없습니다.")
+            val sourceFolder = storedFolderUri()?.let { backupDirectory(it, savedSubfolder()) }
+            val sameFolder = sourceFolder != null && sameDocument(sourceFolder.uri, destination.uri)
+            val source = if (sameFolder) null else sourceFolder?.findFile(CURRENT_FILE)?.takeIf { it.isFile }
+            val sourceInfo = source?.let { runCatching { inspectInternal(it.uri, CURRENT_FILE) }.getOrNull() }
+            val movedHistory = if (sameFolder || sourceFolder == null) emptyList()
+                else copyOlderBackups(sourceFolder, destination)
+            val createFresh = !sameFolder && sourceInfo == null
+
+            val result = if (sameFolder) {
+                val existing = destination.findFile(CURRENT_FILE)?.takeIf { it.isFile }
+                existing?.let { runCatching { inspectInternal(it.uri, CURRENT_FILE) }.getOrNull() }
+                    ?: run {
+                        existing?.let { archiveBackup(destination, it, "loopmuse-unreadable-before-move") }
+                        writeBackup(candidate.treeUri, "loopmuse", true, candidate.subfolder)
+                    }
+            } else if (source != null && sourceInfo != null) {
+                val bytes = readBytes(source.uri)
+                destination.findFile(CURRENT_FILE)?.takeIf { it.isFile }?.let {
+                    archiveBackup(destination, it, "loopmuse-before-move")
+                }
+                val pending = destination.createFile("application/json",
+                    "loopmuse_pending-move-${System.currentTimeMillis()}-${UUID.randomUUID().toString().take(8)}.json")
+                    ?: error("백업 이동 파일을 만들지 못했습니다.")
+                try {
+                    writeBytesVerified(pending, bytes)
+                    val target = destination.findFile(CURRENT_FILE)?.takeIf { it.isFile }
+                        ?: destination.createFile("application/json", CURRENT_FILE)
+                        ?: error("새 위치에 백업파일을 만들지 못했습니다.")
+                    writeBytesVerified(target, bytes)
+                    inspectInternal(target.uri, CURRENT_FILE).also {
+                        check(it.createdAt == sourceInfo.createdAt) { "옮긴 백업 확인에 실패했습니다." }
+                    }
+                } finally { pending.delete() }
+            } else {
+                source?.let { archiveBackup(destination, it, "loopmuse-unreadable-before-move") }
+                destination.findFile(CURRENT_FILE)?.takeIf { it.isFile }?.let {
+                    archiveBackup(destination, it, "loopmuse-before-move")
+                }
+                writeBackup(candidate.treeUri, "loopmuse", true, candidate.subfolder, recordState = false)
+            }
+
+            val editor = prefs.edit().putString("folder_uri", candidate.treeUri.toString())
+                .putString("folder_label", candidate.path)
+                .remove("setup_pending")
+                .apply {
+                    if (candidate.subfolder == null) remove("folder_subfolder")
+                    else putString("folder_subfolder", candidate.subfolder)
+                }
+            if (createFresh) {
+                val digest = JsonParser.parseString(readText(result.uri)).asJsonObject.get("sha256").asString
+                editor.putLong("last_success", result.createdAt).putString("last_digest", digest)
+                    .remove("last_error")
+            }
+            check(editor.commit()) { "백업 경로를 저장하지 못했습니다." }
+            if (!sameFolder && source != null) source.delete()
+            movedHistory.forEach { it.delete() }
+            result
+        }
+    }
+
+    private fun copyOlderBackups(source: DocumentFile, destination: DocumentFile): List<DocumentFile> {
+        val copied = mutableListOf<DocumentFile>()
+        fun copyFiles(to: DocumentFile, files: List<DocumentFile>) {
+            files.forEach { file ->
+                val originalName = file.name ?: return@forEach
+                val name = if (to.findFile(originalName) == null) originalName
+                    else "loopmuse-moved-${System.currentTimeMillis()}-${UUID.randomUUID().toString().take(8)}-$originalName"
+                val target = to.createFile("application/json", name)
+                    ?: error("이전 백업파일을 옮기지 못했습니다.")
+                try {
+                    writeBytesVerified(target, readBytes(file.uri))
+                    copied += file
+                } catch (e: Exception) { target.delete(); throw e }
+            }
+        }
+        copyFiles(destination, source.listFiles().filter { file ->
+            file.isFile && file.name?.endsWith(".json") == true && file.name != CURRENT_FILE &&
+                (file.name?.startsWith("loopmuse-") == true || file.name == "loopmuse_backup.json")
+        })
+        source.findFile(RECOVERY_FOLDER)?.takeIf { it.isDirectory }?.let { recovery ->
+            val files = recovery.listFiles().filter { it.isFile && it.name?.endsWith(".json") == true }
+            if (files.isNotEmpty()) copyFiles(recoveryFolder(destination), files)
+        }
+        return copied
+    }
+
+    private fun sameDocument(first: Uri, second: Uri): Boolean {
+        if (first == second) return true
+        if (first.authority != second.authority) return false
+        val firstId = runCatching { DocumentsContract.getDocumentId(first) }.getOrNull()
+        val secondId = runCatching { DocumentsContract.getDocumentId(second) }.getOrNull()
+        return firstId != null && firstId == secondId
+    }
+
+    private fun archiveBackup(parent: DocumentFile, file: DocumentFile, prefix: String) {
+        val bytes = readBytes(file.uri)
+        val archive = recoveryFolder(parent).createFile("application/json",
+            "$prefix-${System.currentTimeMillis()}-${UUID.randomUUID().toString().take(8)}.json")
+            ?: error("기존 백업 보관 파일을 만들지 못했습니다.")
+        try { writeBytesVerified(archive, bytes) }
+        catch (e: Exception) { archive.delete(); throw e }
+    }
+
+    private fun writeBytesVerified(file: DocumentFile, bytes: ByteArray) {
+        context.contentResolver.openOutputStream(file.uri, "wt")?.use { it.write(bytes); it.flush() }
+            ?: error("백업파일을 저장할 수 없습니다.")
+        check(readBytes(file.uri).contentEquals(bytes)) { "백업파일 검증에 실패했습니다." }
     }
 
     suspend fun backupNow(): BackupInfo = withContext(Dispatchers.IO) {
-        val uri = savedFolderUri() ?: error("백업 폴더를 다시 선택해 주세요.")
-        mutex.withLock { writeBackup(uri, "loopmuse", true) }
+        mutex.withLock {
+            val uri = savedFolderUri() ?: error("백업 폴더를 다시 선택해 주세요.")
+            writeBackup(uri, "loopmuse", true, savedSubfolder())
+        }
     }
 
-    private suspend fun writeBackup(treeUri: Uri, prefix: String, force: Boolean): BackupInfo {
-        val folder = DocumentFile.fromTreeUri(context, treeUri) ?: error("백업 폴더를 열 수 없습니다.")
+    private suspend fun writeBackup(treeUri: Uri, prefix: String, force: Boolean,
+                                    subfolder: String? = savedSubfolder(), recordState: Boolean = true): BackupInfo {
+        val folder = backupDirectory(treeUri, subfolder, create = true) ?: error("백업 폴더를 열 수 없습니다.")
         val payloadJson = gson.toJson(capture())
         val digest = sha256(payloadJson)
         val time = System.currentTimeMillis()
@@ -248,7 +475,7 @@ class BackupManager(private val context: Context, private val database: AppDatab
             ?: error("현재 백업 파일을 만들지 못했습니다.")
         val result = writeAndVerify(current, envelopeText, time)
         pending.delete()
-        check(prefs.edit().putLong("last_success", time).putString("last_digest", digest)
+        if (recordState) check(prefs.edit().putLong("last_success", time).putString("last_digest", digest)
             .remove("last_error").commit()) { "백업 상태를 저장하지 못했습니다. 백업 파일은 보관됩니다." }
         return result
     }
@@ -490,6 +717,10 @@ class BackupManager(private val context: Context, private val database: AppDatab
     }
 
     private fun readText(uri: Uri): String {
+        return readBytes(uri).toString(Charsets.UTF_8)
+    }
+
+    private fun readBytes(uri: Uri): ByteArray {
         val stream = context.contentResolver.openInputStream(uri) ?: error("백업 파일을 열 수 없습니다.")
         return stream.use { input ->
             val output = ByteArrayOutputStream(); val buffer = ByteArray(8192); var size = 0
@@ -498,7 +729,7 @@ class BackupManager(private val context: Context, private val database: AppDatab
                 size += count; require(size <= 32 * 1024 * 1024) { "백업 파일이 너무 큽니다." }
                 output.write(buffer, 0, count)
             }
-            output.toString(Charsets.UTF_8.name())
+            output.toByteArray()
         }
     }
 
@@ -515,6 +746,11 @@ class BackupManager(private val context: Context, private val database: AppDatab
             source.registerOnSharedPreferenceChangeListener(listener)
             source to listener
         }
+        val setupListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == "setup_pending") signal.trySend(Unit)
+        }
+        prefs.registerOnSharedPreferenceChangeListener(setupListener)
+        listeners = listeners + (prefs to setupListener)
         watcherJobs = listOf(
             scope.launch { database.songMetaDao().getAllMetadata().collect { signal.trySend(Unit) } },
             scope.launch { database.alarmDao().getAllAlarms().collect { signal.trySend(Unit) } },
@@ -523,8 +759,9 @@ class BackupManager(private val context: Context, private val database: AppDatab
                 for (ignored in signal) {
                     delay(2500)
                     while (signal.tryReceive().isSuccess) { /* collapse bursts */ }
-                    val folder = savedFolderUri() ?: continue
-                    runCatching { mutex.withLock { writeBackup(folder, "loopmuse", false) } }
+                    runCatching { mutex.withLock {
+                        savedFolderUri()?.let { writeBackup(it, "loopmuse", false, savedSubfolder()) }
+                    } }
                         .onFailure { prefs.edit().putString("last_error", it.message ?: "자동 백업 실패").commit() }
                 }
             }
