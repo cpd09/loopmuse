@@ -8,7 +8,9 @@ data class AlarmGlobalConfig(
     val fadeEnabled: Boolean = true,
     val fadeStartPercent: Int = 10,
     val fadeDurationSeconds: Int = 30,
-    val blinkIntervalSeconds: Int = 2
+    val blinkIntervalSeconds: Int = 2,
+    val snoozeEnabled: Boolean = true,
+    val snoozeMinutes: Int = 5
 )
 
 /** Values shared by all alarms; only the alert mode belongs to an individual alarm. */
@@ -24,7 +26,9 @@ object AlarmGlobalSettings {
             fadeEnabled = prefs.getBoolean("fade_enabled", true),
             fadeStartPercent = prefs.getInt("fade_start_percent", 10).coerceIn(1, volume),
             fadeDurationSeconds = prefs.getInt("fade_duration_seconds", 30).coerceIn(5, 120),
-            blinkIntervalSeconds = prefs.getInt("blink_interval_seconds", 2).coerceIn(1, 5)
+            blinkIntervalSeconds = prefs.getInt("blink_interval_seconds", 2).coerceIn(1, 5),
+            snoozeEnabled = prefs.getBoolean("snooze_enabled", true),
+            snoozeMinutes = prefs.getInt("snooze_minutes", 5).coerceIn(1, 30)
         )
     }
 
@@ -37,6 +41,8 @@ object AlarmGlobalSettings {
             .putInt("fade_start_percent", config.fadeStartPercent.coerceIn(1, volume))
             .putInt("fade_duration_seconds", config.fadeDurationSeconds.coerceIn(5, 120))
             .putInt("blink_interval_seconds", config.blinkIntervalSeconds.coerceIn(1, 5))
+            .putBoolean("snooze_enabled", config.snoozeEnabled)
+            .putInt("snooze_minutes", config.snoozeMinutes.coerceIn(1, 30))
             .apply()
     }
 }

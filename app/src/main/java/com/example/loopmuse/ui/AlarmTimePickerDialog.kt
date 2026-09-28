@@ -2,7 +2,8 @@ package com.example.loopmuse.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -31,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -42,6 +44,8 @@ import androidx.compose.ui.window.DialogProperties
 import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.cos
+import kotlin.math.atan2
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 @Composable
@@ -79,7 +83,8 @@ fun AlarmTimePickerDialog(
                                 else MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-                Text(if (selectingHour) "안쪽 1~12시 · 바깥쪽 13~24시" else "분을 고른 뒤 ±1분으로 조절",
+                Text(if (selectingHour) "안쪽 1~12시 · 바깥쪽 13~24시 · 드래그하여 선택"
+                    else "시계판을 드래그하여 분 선택 · ±1분 미세 조절",
                     fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(10.dp))
                 BoxWithConstraints(modifier = Modifier.fillMaxWidth(),
@@ -89,7 +94,8 @@ fun AlarmTimePickerDialog(
                         hourMode = selectingHour,
                         hour = hour,
                         minute = minute,
-                        onHourSelected = { hour = it; selectingHour = false },
+                        onHourSelected = { hour = it },
+                        onHourSelectionFinished = { selectingHour = false },
                         onMinuteSelected = { minute = it }
                     )
                 }
@@ -123,6 +129,7 @@ private fun AlarmClockDial(
     hour: Int,
     minute: Int,
     onHourSelected: (Int) -> Unit,
+    onHourSelectionFinished: () -> Unit,
     onMinuteSelected: (Int) -> Unit
 ) {
     val primary = MaterialTheme.colorScheme.primary
@@ -135,7 +142,35 @@ private fun AlarmClockDial(
     val labelSize = 36.dp
 
     Box(modifier = Modifier.size(dialSize).background(MaterialTheme.colorScheme.surfaceVariant,
-        CircleShape), contentAlignment = Alignment.TopStart) {
+        CircleShape).pointerInput(hourMode, dialSize) {
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                fun selectAt(position: Offset) {
+                    val centerPx = size.width / 2f
+                    val dx = position.x - centerPx
+                    val dy = position.y - centerPx
+                    val distance = kotlin.math.hypot(dx, dy)
+                    if (distance < 18.dp.toPx()) return
+                    val angle = (atan2(dy, dx) + (PI / 2).toFloat() + (2 * PI).toFloat()) %
+                        (2 * PI).toFloat()
+                    if (hourMode) {
+                        val index = (angle / (PI / 6).toFloat()).roundToInt() % 12
+                        val outer = distance > ((outerRadius + innerRadius) / 2f).dp.toPx()
+                        onHourSelected(if (outer) if (index == 0) 0 else index + 12
+                            else if (index == 0) 12 else index)
+                    } else {
+                        onMinuteSelected((angle / (PI / 30).toFloat()).roundToInt() % 60)
+                    }
+                }
+                selectAt(down.position)
+                do {
+                    val event = awaitPointerEvent()
+                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                    if (change.pressed) selectAt(change.position)
+                } while (change.pressed)
+                if (hourMode) onHourSelectionFinished()
+            }
+        }, contentAlignment = Alignment.TopStart) {
         Canvas(Modifier.size(dialSize)) {
             val centerPx = Offset(size.width / 2f, size.height / 2f)
             drawCircle(ring, radius = outerRadius.dp.toPx(), center = centerPx,
@@ -174,7 +209,6 @@ private fun AlarmClockDial(
                 Box(modifier = Modifier.offset(x.dp, y.dp).size(labelSize)
                     .background(if (selected) primary else MaterialTheme.colorScheme.surfaceVariant,
                         CircleShape)
-                    .clickable { if (hourMode) onHourSelected(value) else onMinuteSelected(value) }
                     .semantics { contentDescription = if (hourMode) "$label 시" else "$label 분" },
                     contentAlignment = Alignment.Center) {
                     Text(label, fontSize = 15.sp, fontWeight = FontWeight.Bold,

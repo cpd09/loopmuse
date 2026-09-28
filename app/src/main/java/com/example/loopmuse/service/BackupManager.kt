@@ -597,7 +597,16 @@ class BackupManager(private val context: Context, private val database: AppDatab
             "백업 내용이 완전하지 않습니다."
         }
         val rawPayload = gson.fromJson(envelope.payload, Payload::class.java)
-        val payload = rawPayload.copy(alarms = rawPayload.alarms.map { alarm ->
+        val savedGlobalFields = fields.get("alarmGlobalConfig")?.takeIf { it.isJsonObject }?.asJsonObject
+        val globalConfig = rawPayload.alarmGlobalConfig?.let { config ->
+            config.copy(
+                snoozeEnabled = if (savedGlobalFields?.has("snoozeEnabled") == true)
+                    config.snoozeEnabled else true,
+                snoozeMinutes = if (savedGlobalFields?.has("snoozeMinutes") == true)
+                    config.snoozeMinutes.coerceIn(1, 30) else 5
+            )
+        }
+        val payload = rawPayload.copy(alarmGlobalConfig = globalConfig, alarms = rawPayload.alarms.map { alarm ->
             alarm.copy(
                 label = alarm.label.orEmpty(),
                 soundMode = alarm.soundMode?.takeIf {

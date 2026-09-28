@@ -14,7 +14,6 @@ class AlarmScheduler(private val context: Context) {
 
     companion object {
         const val ACTION_SNOOZE_TRIGGER = "com.example.loopmuse.action.SNOOZE_TRIGGER"
-        const val SNOOZE_DELAY_MS = 5 * 60 * 1000L
     }
 
     fun scheduleAlarm(alarm: AlarmEntity) {
@@ -75,8 +74,9 @@ class AlarmScheduler(private val context: Context) {
 
     fun scheduleSnooze(alarmId: Int) {
         requireExactAlarmAccess()
+        val delayMs = AlarmGlobalSettings.read(context).snoozeMinutes * 60_000L
         alarmManager.setAlarmClock(
-            AlarmManager.AlarmClockInfo(System.currentTimeMillis() + SNOOZE_DELAY_MS,
+            AlarmManager.AlarmClockInfo(System.currentTimeMillis() + delayMs,
                 showAlarmPendingIntent(alarmId)),
             snoozePendingIntent(alarmId, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)!!
         )

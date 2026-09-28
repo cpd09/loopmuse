@@ -133,14 +133,18 @@ class AlarmPlaybackService : Service() {
                 if (currentAlarmId == 0) stopSelf(startId)
                 return START_NOT_STICKY
             }
-            try {
-                AlarmScheduler(this).scheduleSnooze(requestedId)
-            } catch (e: Exception) {
-                Log.w("LoopMuse", "Cannot snooze alarm $requestedId", e)
-                sendBroadcast(Intent(ACTION_SNOOZE_FAILED).setPackage(packageName).putExtra("ALARM_ID", requestedId))
-                return START_NOT_STICKY
+            if (AlarmGlobalSettings.read(this).snoozeEnabled) {
+                try {
+                    AlarmScheduler(this).scheduleSnooze(requestedId)
+                } catch (e: Exception) {
+                    Log.w("LoopMuse", "Cannot snooze alarm $requestedId", e)
+                    sendBroadcast(Intent(ACTION_SNOOZE_FAILED).setPackage(packageName).putExtra("ALARM_ID", requestedId))
+                    return START_NOT_STICKY
+                }
+                endAlarm(ACTION_ALARM_SILENCED)
+            } else {
+                endAlarm(ACTION_ALARM_FINISHED)
             }
-            endAlarm(ACTION_ALARM_SILENCED)
             return START_NOT_STICKY
         }
 
@@ -471,13 +475,6 @@ class AlarmPlaybackService : Service() {
         val stopPendingIntent = PendingIntent.getService(this, alarmId, stopIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
-        val dismissIntent = Intent(this, AlarmPlaybackService::class.java).apply {
-            action = ACTION_DISMISS_SNOOZE
-            putExtra("ALARM_ID", alarmId)
-        }
-        val dismissPendingIntent = PendingIntent.getService(this, alarmId, dismissIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-
         val fullScreenIntent = alarmScreenIntent(alarmId, hour, minute, songTitle, isSnoozeRing)
         val activityOptions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             ActivityOptions.makeBasic().apply {
@@ -505,8 +502,7 @@ class AlarmPlaybackService : Service() {
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .setContentIntent(fullScreenPendingIntent)
             .setFullScreenIntent(fullScreenPendingIntent, true)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "완전히 종료", dismissPendingIntent)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "5분 뒤 재알람", stopPendingIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "알람 멈춤", stopPendingIntent)
             .build()
     }
 

@@ -6,6 +6,7 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -48,7 +50,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.loopmuse.service.BackupManager
@@ -59,38 +60,60 @@ import com.example.loopmuse.service.alarm.AlarmGlobalSettings
 private enum class SettingsPage { MENU, DATA, ABOUT }
 
 @Composable
-private fun <T> SettingsDropdownCell(
-    title: String,
+private fun <T> SettingsDropdownButton(
     value: T,
     options: List<Pair<T, String>>,
     modifier: Modifier = Modifier,
     onSelect: (T) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
-    Row(modifier.height(40.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text("$title :", modifier = Modifier.weight(1f, fill = false), maxLines = 1,
-            overflow = TextOverflow.Ellipsis, fontSize = 13.sp)
-        Spacer(Modifier.width(4.dp))
-        Box {
-            OutlinedButton(onClick = { expanded = true },
-                modifier = Modifier.width(70.dp).height(32.dp),
-                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)) {
-                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    Text(options.firstOrNull { it.first == value }?.second ?: value.toString(),
-                        maxLines = 1, fontSize = 11.sp, textAlign = TextAlign.Center)
-                    Icon(Icons.Default.ArrowDropDown, contentDescription = null,
-                        modifier = Modifier.align(Alignment.CenterEnd).size(14.dp))
-                }
-            }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                options.forEach { (option, label) ->
-                    DropdownMenuItem(text = { Text(label) }, onClick = {
-                        onSelect(option)
-                        expanded = false
-                    })
-                }
+    Box(modifier) {
+        OutlinedButton(onClick = { expanded = true },
+            modifier = Modifier.fillMaxWidth().height(32.dp),
+            contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp)) {
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Text(options.firstOrNull { it.first == value }?.second ?: value.toString(),
+                    maxLines = 1, fontSize = 11.sp, textAlign = TextAlign.Center)
+                Icon(Icons.Default.ArrowDropDown, contentDescription = null,
+                    modifier = Modifier.align(Alignment.CenterEnd).size(12.dp))
             }
         }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { (option, label) ->
+                DropdownMenuItem(text = { Text(label) }, onClick = {
+                    onSelect(option)
+                    expanded = false
+                })
+            }
+        }
+    }
+}
+
+@Composable
+private fun <T> SettingsInlineDropdown(
+    title: String,
+    value: T,
+    options: List<Pair<T, String>>,
+    buttonWidth: androidx.compose.ui.unit.Dp,
+    onSelect: (T) -> Unit
+) {
+    Text("$title :", fontSize = 11.sp, maxLines = 1)
+    Spacer(Modifier.width(3.dp))
+    SettingsDropdownButton(value, options, Modifier.width(buttonWidth), onSelect)
+}
+
+@Composable
+private fun <T> SettingsGroupedControl(
+    title: String,
+    value: T,
+    options: List<Pair<T, String>>,
+    modifier: Modifier,
+    onSelect: (T) -> Unit
+) {
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("$title :", fontSize = 12.sp, maxLines = 1)
+        Spacer(Modifier.height(4.dp))
+        SettingsDropdownButton(value, options, Modifier.width(72.dp), onSelect)
     }
 }
 
@@ -146,42 +169,56 @@ fun SettingsScreen(
                 Spacer(Modifier.height(8.dp))
                 Text("알람설정", style = MaterialTheme.typography.titleMedium)
                 Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         val percentOptions = (10..100 step 10).map { it to "$it%" }
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-                            SettingsDropdownCell("소리 크기", alarmConfig.volumePercent,
+                        Row(Modifier.fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                RoundedCornerShape(12.dp))
+                            .padding(horizontal = 6.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            SettingsGroupedControl("소리 크기", alarmConfig.volumePercent,
                                 percentOptions, Modifier.weight(1f)) { volume ->
                                 updateAlarmConfig(alarmConfig.copy(volumePercent = volume,
                                     fadeStartPercent = alarmConfig.fadeStartPercent.coerceAtMost(volume)))
                             }
-                            SettingsDropdownCell("진동 강도", alarmConfig.vibrationPercent,
+                            SettingsGroupedControl("진동 강도", alarmConfig.vibrationPercent,
                                 percentOptions, Modifier.weight(1f)) {
                                 updateAlarmConfig(alarmConfig.copy(vibrationPercent = it))
                             }
-                        }
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-                            SettingsDropdownCell("점멸 간격", alarmConfig.blinkIntervalSeconds,
+                            SettingsGroupedControl("점멸 간격", alarmConfig.blinkIntervalSeconds,
                                 (1..5).map { it to "${it}초" }, Modifier.weight(1f)) {
                                 updateAlarmConfig(alarmConfig.copy(blinkIntervalSeconds = it))
                             }
-                            SettingsDropdownCell("페이드인", alarmConfig.fadeEnabled,
-                                listOf(true to "켬", false to "끔"), Modifier.weight(1f)) {
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center) {
+                            SettingsInlineDropdown("페이드인", alarmConfig.fadeEnabled,
+                                listOf(true to "켬", false to "끔"), 46.dp) {
                                 updateAlarmConfig(alarmConfig.copy(fadeEnabled = it))
                             }
+                            Spacer(Modifier.width(6.dp))
+                            SettingsInlineDropdown("시작음량", alarmConfig.fadeStartPercent,
+                                percentOptions.filter { it.first <= alarmConfig.volumePercent }, 48.dp) {
+                                updateAlarmConfig(alarmConfig.copy(fadeStartPercent = it))
+                            }
+                            Spacer(Modifier.width(6.dp))
+                            SettingsInlineDropdown("도달시간", alarmConfig.fadeDurationSeconds,
+                                listOf(5, 10, 15, 20, 30, 45, 60, 90, 120).map { it to "${it}초" }, 51.dp) {
+                                updateAlarmConfig(alarmConfig.copy(fadeDurationSeconds = it))
+                            }
                         }
-                        if (alarmConfig.fadeEnabled) {
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-                                SettingsDropdownCell("시작 음량", alarmConfig.fadeStartPercent,
-                                    percentOptions.filter { it.first <= alarmConfig.volumePercent },
-                                    Modifier.weight(1f)) {
-                                    updateAlarmConfig(alarmConfig.copy(fadeStartPercent = it))
-                                }
-                                SettingsDropdownCell("목표까지", alarmConfig.fadeDurationSeconds,
-                                    listOf(5, 10, 15, 20, 30, 45, 60, 90, 120).map { it to "${it}초" },
-                                    Modifier.weight(1f)) {
-                                    updateAlarmConfig(alarmConfig.copy(fadeDurationSeconds = it))
-                                }
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center) {
+                            SettingsInlineDropdown("스누즈", alarmConfig.snoozeEnabled,
+                                listOf(true to "켬", false to "끔"), 46.dp) {
+                                updateAlarmConfig(alarmConfig.copy(snoozeEnabled = it))
+                            }
+                            Spacer(Modifier.width(14.dp))
+                            SettingsInlineDropdown("재알람시간", alarmConfig.snoozeMinutes,
+                                (1..30).map { it to "${it}분" }, 54.dp) {
+                                updateAlarmConfig(alarmConfig.copy(snoozeMinutes = it))
                             }
                         }
                         HorizontalDivider()
