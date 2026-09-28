@@ -21,5 +21,5 @@ data class AlarmEntity(
     val useFadeIn: Boolean = true,
     val respectPhoneSoundMode: Boolean = false, // Kept to interpret alarms created before sound modes.
     val label: String = "",
-    val soundMode: String = "LEGACY" // SOUND, VIBRATE, LIGHT, PHONE, or LEGACY.
+    val soundMode: String = "LEGACY" // SOUND, VIBRATE, LIGHT (silent screen), PHONE, or LEGACY.
 )

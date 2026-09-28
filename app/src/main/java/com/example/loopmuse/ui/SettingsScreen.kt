@@ -7,6 +7,7 @@ import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -16,10 +17,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -49,6 +52,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -97,9 +104,37 @@ private fun <T> SettingsInlineDropdown(
     buttonWidth: androidx.compose.ui.unit.Dp,
     onSelect: (T) -> Unit
 ) {
-    Text("$title :", fontSize = 11.sp, maxLines = 1)
+    Text("$title :", modifier = Modifier.width(64.dp), fontSize = 11.sp,
+        maxLines = 1, textAlign = TextAlign.End)
     Spacer(Modifier.width(3.dp))
     SettingsDropdownButton(value, options, Modifier.width(buttonWidth), onSelect)
+}
+
+@Composable
+private fun SettingsInlineToggle(
+    title: String,
+    checked: Boolean,
+    onChange: (Boolean) -> Unit
+) {
+    Row(Modifier.height(32.dp)
+        .semantics {
+            contentDescription = title
+            stateDescription = if (checked) "켜짐" else "꺼짐"
+        }
+        .toggleable(value = checked, role = Role.Switch, onValueChange = onChange),
+        verticalAlignment = Alignment.CenterVertically) {
+        Text("$title :", modifier = Modifier.width(52.dp), fontSize = 11.sp,
+            maxLines = 1, textAlign = TextAlign.Start)
+        Spacer(Modifier.width(3.dp))
+        Box(Modifier.width(38.dp).height(30.dp), contentAlignment = Alignment.Center) {
+            Box(Modifier.width(33.dp).height(19.dp).clip(RoundedCornerShape(10.dp))
+                .background(if (checked) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.outline))
+            Box(Modifier.offset(x = if (checked) 7.dp else (-7).dp)
+                .size(15.dp).clip(RoundedCornerShape(50))
+                .background(MaterialTheme.colorScheme.onPrimary))
+        }
+    }
 }
 
 @Composable
@@ -193,9 +228,8 @@ fun SettingsScreen(
                         }
                         Spacer(Modifier.height(4.dp))
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center) {
-                            SettingsInlineDropdown("페이드인", alarmConfig.fadeEnabled,
-                                listOf(true to "켬", false to "끔"), 46.dp) {
+                            horizontalArrangement = Arrangement.Start) {
+                            SettingsInlineToggle("페이드인", alarmConfig.fadeEnabled) {
                                 updateAlarmConfig(alarmConfig.copy(fadeEnabled = it))
                             }
                             Spacer(Modifier.width(6.dp))
@@ -210,12 +244,11 @@ fun SettingsScreen(
                             }
                         }
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center) {
-                            SettingsInlineDropdown("스누즈", alarmConfig.snoozeEnabled,
-                                listOf(true to "켬", false to "끔"), 46.dp) {
+                            horizontalArrangement = Arrangement.Start) {
+                            SettingsInlineToggle("스누즈", alarmConfig.snoozeEnabled) {
                                 updateAlarmConfig(alarmConfig.copy(snoozeEnabled = it))
                             }
-                            Spacer(Modifier.width(14.dp))
+                            Spacer(Modifier.width(6.dp))
                             SettingsInlineDropdown("재알람시간", alarmConfig.snoozeMinutes,
                                 (1..30).map { it to "${it}분" }, 54.dp) {
                                 updateAlarmConfig(alarmConfig.copy(snoozeMinutes = it))

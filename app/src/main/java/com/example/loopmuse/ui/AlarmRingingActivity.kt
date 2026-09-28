@@ -17,6 +17,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -38,6 +39,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -83,6 +85,8 @@ class AlarmRingingActivity : ComponentActivity() {
     private var alarmHour by mutableStateOf(0)
     private var alarmMinute by mutableStateOf(0)
     private var songTitle by mutableStateOf<String?>(null)
+    private var isVisualAlarm by mutableStateOf(false)
+    private var blinkIntervalSeconds by mutableIntStateOf(2)
     private var actionPending by mutableStateOf(false)
     private var isChaseMode by mutableStateOf(false)
     private var isCelebrating by mutableStateOf(false)
@@ -133,6 +137,8 @@ class AlarmRingingActivity : ComponentActivity() {
                 AlarmRingingScreen(
                     time = String.format(Locale.KOREA, "%02d:%02d", alarmHour, alarmMinute),
                     songTitle = songTitle,
+                    isVisualAlarm = isVisualAlarm,
+                    blinkIntervalSeconds = blinkIntervalSeconds,
                     isChaseMode = isChaseMode,
                     snoozeEnabled = snoozeEnabled,
                     snoozeMinutes = snoozeMinutes,
@@ -213,9 +219,11 @@ class AlarmRingingActivity : ComponentActivity() {
         alarmHour = intent.getIntExtra("ALARM_HOUR", 0)
         alarmMinute = intent.getIntExtra("ALARM_MINUTE", 0)
         songTitle = intent.getStringExtra("SONG_TITLE")
+        isVisualAlarm = intent.getBooleanExtra("IS_VISUAL_ALARM", false)
         AlarmGlobalSettings.read(this).let {
             snoozeEnabled = it.snoozeEnabled
             snoozeMinutes = it.snoozeMinutes
+            blinkIntervalSeconds = it.blinkIntervalSeconds
         }
         isChaseMode = false
         isCelebrating = false
@@ -247,6 +255,8 @@ private val softWhite = Color(0xFFF7F3FF)
 private fun AlarmRingingScreen(
     time: String,
     songTitle: String?,
+    isVisualAlarm: Boolean,
+    blinkIntervalSeconds: Int,
     isChaseMode: Boolean,
     snoozeEnabled: Boolean,
     snoozeMinutes: Int,
@@ -257,12 +267,18 @@ private fun AlarmRingingScreen(
 ) {
     Surface(modifier = Modifier.fillMaxSize(), color = nightBackground) {
       Box(Modifier.fillMaxSize()) {
+        if (isVisualAlarm && !isChaseMode && !isCelebrating) {
+            SilentScreenPulse(blinkIntervalSeconds)
+        }
         Column(
             modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 32.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text("LOOPMUSE  ·  ALARM", fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
-                letterSpacing = 2.sp, color = lavender)
+            Text(if (isVisualAlarm) "무음 알람  ·  화면 알림" else "LOOPMUSE  ·  ALARM",
+                fontSize = if (isVisualAlarm) 17.sp else 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = if (isVisualAlarm) 0.sp else 2.sp,
+                color = if (isVisualAlarm) Color(0xFFD8FFAF) else lavender)
             Spacer(Modifier.height(10.dp))
             Text(time, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = softWhite)
             Text(songTitle?.takeIf { it.isNotBlank() } ?: "알람음",
@@ -292,6 +308,23 @@ private fun AlarmRingingScreen(
         if (isCelebrating) CelebrationOverlay()
       }
     }
+}
+
+@Composable
+private fun SilentScreenPulse(intervalSeconds: Int) {
+    val pulse = remember { Animatable(0f) }
+    LaunchedEffect(intervalSeconds) {
+        while (true) {
+            pulse.animateTo(1f, tween(durationMillis = 300))
+            pulse.animateTo(0f, tween(durationMillis = 450))
+            delay((intervalSeconds.coerceIn(1, 5) * 1000L - 750L).coerceAtLeast(0L))
+        }
+    }
+    val glow = Color(0xFFB8FFB5)
+    Box(Modifier.fillMaxSize()
+        .background(glow.copy(alpha = pulse.value * 0.16f))
+        .border(BorderStroke(5.dp, glow.copy(alpha = 0.16f + pulse.value * 0.68f)),
+            RoundedCornerShape(22.dp)))
 }
 
 @Composable

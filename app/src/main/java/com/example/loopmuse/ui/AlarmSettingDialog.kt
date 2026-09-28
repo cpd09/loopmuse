@@ -714,11 +714,7 @@ fun AlarmSettingDialog(
                 }
                 Spacer(Modifier.height(4.dp))
                 Column(modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
-                    Surface(shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.surface,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                        shadowElevation = 2.dp,
-                        modifier = Modifier.fillMaxWidth()) {
+                    Box(modifier = Modifier.fillMaxWidth()) {
                         Column(modifier = Modifier.padding(8.dp)) {
                     Surface(shape = RoundedCornerShape(8.dp),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)),
@@ -731,7 +727,7 @@ fun AlarmSettingDialog(
                             modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 8.dp),
                             decorationBox = { innerTextField ->
                                 Box(contentAlignment = Alignment.CenterStart) {
-                                    if (label.isEmpty()) Text("알람 제목 (선택)",
+                                    if (label.isEmpty()) Text("알람제목을 입력하세요",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     innerTextField()
@@ -820,11 +816,7 @@ fun AlarmSettingDialog(
                         }
                     }
                     Spacer(Modifier.height(8.dp))
-                    Surface(shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.surface,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                        shadowElevation = 2.dp,
-                        modifier = Modifier.fillMaxWidth()) {
+                    Box(modifier = Modifier.fillMaxWidth()) {
                         BoxWithConstraints(modifier = Modifier.fillMaxWidth()
                             .padding(horizontal = 12.dp, vertical = 8.dp)) {
                         val comboWidth = minOf(180.dp, maxWidth * 0.6f)
@@ -835,14 +827,14 @@ fun AlarmSettingDialog(
                                 val choices = listOf(
                                     "SOUND" to "소리",
                                     "VIBRATE" to "진동",
-                                    "LIGHT" to "무음(불빛)",
+                                    "LIGHT" to "무음(화면)",
                                     "PHONE" to "휴대폰 모드"
                                 )
                                 OutlinedButton(onClick = { soundMenuExpanded = true },
                                     modifier = Modifier.fillMaxWidth().height(38.dp),
                                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
                                     Text(choices.firstOrNull { it.first == soundMode }?.second ?: choices.first().second,
-                                        fontSize = 12.sp, modifier = Modifier.weight(1f), textAlign = TextAlign.Start,
+                                        fontSize = 12.sp, modifier = Modifier.weight(1f), textAlign = TextAlign.Center,
                                         maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Icon(Icons.Default.ArrowDropDown, contentDescription = null,
                                         modifier = Modifier.size(18.dp))
@@ -904,11 +896,6 @@ fun AlarmSettingDialog(
                     Button(onClick = {
                         val enabledAfterSave = selectedAlarm?.isEnabled ?: true
                         if (enabledAfterSave && !canEnableAlarm()) return@Button
-                        if (soundMode == "LIGHT" &&
-                            !context.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_FLASH)) {
-                            Toast.makeText(context, "이 기기는 불빛 점멸을 지원하지 않습니다.", Toast.LENGTH_LONG).show()
-                            return@Button
-                        }
                         if (songDurationMs > 0L && (endPositionMs <= startPositionMs || endPositionMs > songDurationMs)) {
                             Toast.makeText(context, "곡 구간을 다시 선택해 주세요.", Toast.LENGTH_SHORT).show()
                             return@Button

@@ -27,6 +27,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -45,6 +46,7 @@ import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.atan2
+import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
@@ -140,17 +142,21 @@ private fun AlarmClockDial(
     val outerRadius = center - 30f
     val innerRadius = outerRadius * 0.61f
     val labelSize = 36.dp
+    val currentMinute = rememberUpdatedState(minute)
 
     Box(modifier = Modifier.size(dialSize).background(MaterialTheme.colorScheme.surfaceVariant,
         CircleShape).pointerInput(hourMode, dialSize) {
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false)
+                var gestureMinute = currentMinute.value
                 fun selectAt(position: Offset) {
                     val centerPx = size.width / 2f
                     val dx = position.x - centerPx
                     val dy = position.y - centerPx
                     val distance = kotlin.math.hypot(dx, dy)
-                    if (distance < 18.dp.toPx()) return
+                    val deadZone = if (hourMode) 18.dp.toPx()
+                        else (outerRadius * 0.45f).dp.toPx()
+                    if (distance < deadZone) return
                     val angle = (atan2(dy, dx) + (PI / 2).toFloat() + (2 * PI).toFloat()) %
                         (2 * PI).toFloat()
                     if (hourMode) {
@@ -159,7 +165,15 @@ private fun AlarmClockDial(
                         onHourSelected(if (outer) if (index == 0) 0 else index + 12
                             else if (index == 0) 12 else index)
                     } else {
-                        onMinuteSelected((angle / (PI / 30).toFloat()).roundToInt() % 60)
+                        val rawMinute = angle / (PI / 30).toFloat()
+                        val change = (rawMinute - gestureMinute + 90f) % 60f - 30f
+                        if (abs(change) >= 0.7f) {
+                            val nextMinute = rawMinute.roundToInt() % 60
+                            if (nextMinute != gestureMinute) {
+                                gestureMinute = nextMinute
+                                onMinuteSelected(nextMinute)
+                            }
+                        }
                     }
                 }
                 selectAt(down.position)
@@ -200,7 +214,7 @@ private fun AlarmClockDial(
                 val x = center + radius * cos(angle).toFloat() - 18f
                 val y = center + radius * sin(angle).toFloat() - 18f
                 val value = if (hourMode) hourLabel(index, outer) else index * 5
-                val selected = if (hourMode) hour == value else minute == value
+                val selected = hourMode && hour == value
                 val label = when {
                     hourMode && outer && index == 0 -> "24"
                     hourMode -> value.toString()
@@ -214,6 +228,17 @@ private fun AlarmClockDial(
                     Text(label, fontSize = 15.sp, fontWeight = FontWeight.Bold,
                         color = if (selected) onPrimary else onSurface)
                 }
+            }
+        }
+        if (!hourMode) {
+            val minuteAngle = minute * PI / 30 - PI / 2
+            val x = center + outerRadius * cos(minuteAngle).toFloat() - 18f
+            val y = center + outerRadius * sin(minuteAngle).toFloat() - 18f
+            Box(Modifier.offset(x.dp, y.dp).size(labelSize).background(primary, CircleShape)
+                .semantics { contentDescription = "${minute}분 선택됨" },
+                contentAlignment = Alignment.Center) {
+                Text(String.format(Locale.KOREA, "%02d", minute), fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold, color = onPrimary)
             }
         }
     }
