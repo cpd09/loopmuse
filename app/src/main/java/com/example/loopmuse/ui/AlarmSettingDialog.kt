@@ -1,18 +1,11 @@
 package com.example.loopmuse.ui
 
-import android.app.NotificationManager
-import android.app.AlarmManager
 import android.content.Context
-import android.content.Intent
-import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.MediaMetadataRetriever
 import android.media.MediaPlayer
 import android.media.RingtoneManager
-import android.net.Uri
-import android.os.Build
-import android.provider.Settings
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
@@ -34,8 +27,6 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.*
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,9 +47,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.compose.LifecycleEventEffect
-import androidx.lifecycle.Lifecycle
-import androidx.core.content.ContextCompat
 import com.example.loopmuse.data.MusicFile
 import com.example.loopmuse.data.db.AlarmEntity
 import com.example.loopmuse.data.db.AppDatabase
@@ -123,40 +111,12 @@ fun AlarmSettingDialog(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
-    var permissionRefresh by remember { mutableIntStateOf(0) }
-    val notificationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
-        permissionRefresh++
-    }
-    LaunchedEffect(Unit) {
-        AlarmPlaybackService.ensureNotificationChannel(context)
-        permissionRefresh++
-    }
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { permissionRefresh++ }
-    val needsExactAlarmPermission = permissionRefresh.let {
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-            !(context.getSystemService(Context.ALARM_SERVICE) as AlarmManager).canScheduleExactAlarms()
-    }
-    val needsNotificationPermission = permissionRefresh.let {
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-    }
-    val needsFullScreenPermission = permissionRefresh.let {
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
-            !(context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).canUseFullScreenIntent()
-    }
-    val needsNotificationSettings = permissionRefresh.let {
-        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val notificationsBlocked = !manager.areNotificationsEnabled() ||
-            (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-                listOf(AlarmPlaybackService.ALARM_CHANNEL_ID, AlarmPlaybackService.SILENT_ALARM_CHANNEL_ID)
-                    .any { channelId -> manager.getNotificationChannel(channelId)
-                        ?.importance?.let { it < NotificationManager.IMPORTANCE_HIGH } == true })
-        if (needsNotificationPermission) false else notificationsBlocked
-    }
+    var showPermissionDialog by remember { mutableStateOf(false) }
+    var pendingNewAlarm by remember { mutableStateOf(false) }
     fun canEnableAlarm(): Boolean {
-        if (!needsExactAlarmPermission && !needsNotificationPermission &&
-            !needsNotificationSettings && !needsFullScreenPermission) return true
-        Toast.makeText(context, "알람 화면을 표시하려면 위의 알람 권한을 먼저 허용해 주세요.", Toast.LENGTH_LONG).show()
+        AlarmPlaybackService.ensureNotificationChannel(context)
+        if (readAlarmPermissionStatus(context).ready) return true
+        showPermissionDialog = true
         return false
     }
     val scope = rememberCoroutineScope()
@@ -297,6 +257,10 @@ fun AlarmSettingDialog(
     }
 
     fun newAlarm() {
+        if (!canEnableAlarm()) {
+            pendingNewAlarm = true
+            return
+        }
         isEditing = true
         selectedId = null
         pendingSelectedAlarm = null
@@ -521,63 +485,6 @@ fun AlarmSettingDialog(
                     Text("알람 관리", fontSize = 19.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                     IconButton(onClick = { stopPreview(); onDismiss() }) {
                         Icon(Icons.Default.Close, contentDescription = "닫기")
-                    }
-                }
-                if (needsExactAlarmPermission || needsNotificationPermission ||
-                    needsFullScreenPermission || needsNotificationSettings) {
-                    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-                        Text("알람이 정시에 울리고 잠금 화면에 표시되려면 아래 권한을 허용하세요.", fontSize = 13.sp)
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End,
-                            verticalAlignment = Alignment.CenterVertically) {
-                            if (needsNotificationPermission) {
-                                TextButton(onClick = {
-                                    notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-                                }, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)) {
-                                    Text("알림 허용", fontSize = 12.sp)
-                                }
-                            }
-                            if (needsNotificationSettings) {
-                                TextButton(onClick = {
-                                    val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                                    val blockedChannelId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                                        listOf(AlarmPlaybackService.ALARM_CHANNEL_ID,
-                                            AlarmPlaybackService.SILENT_ALARM_CHANNEL_ID).firstOrNull { channelId ->
-                                            manager.getNotificationChannel(channelId)
-                                                ?.importance?.let { it < NotificationManager.IMPORTANCE_HIGH } == true
-                                        } else null
-                                    val settingsIntent = when {
-                                        blockedChannelId != null -> Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).apply {
-                                            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                                            putExtra(Settings.EXTRA_CHANNEL_ID, blockedChannelId)
-                                        }
-                                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.O -> Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                                            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                                        }
-                                        else -> Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                                            Uri.parse("package:${context.packageName}"))
-                                    }
-                                    context.startActivity(settingsIntent)
-                                }, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)) {
-                                    Text("알림 설정", fontSize = 12.sp)
-                                }
-                            }
-                            if (needsFullScreenPermission) {
-                                TextButton(onClick = {
-                                    context.startActivity(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
-                                        Uri.parse("package:${context.packageName}")))
-                                }, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)) {
-                                    Text("전체 화면 허용", fontSize = 12.sp)
-                                }
-                            }
-                        }
-                        if (needsExactAlarmPermission) {
-                            TextButton(onClick = {
-                                context.startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
-                                    Uri.parse("package:${context.packageName}")))
-                            }, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)) {
-                                Text("정확한 알람 허용", fontSize = 12.sp)
-                            }
-                        }
                     }
                 }
                 Spacer(Modifier.height(6.dp))
@@ -941,6 +848,20 @@ fun AlarmSettingDialog(
         }
         }
     }
+    if (showPermissionDialog) AlarmPermissionDialog(
+        continueLabel = if (pendingNewAlarm) "알람 추가 계속" else "완료",
+        onReady = {
+            showPermissionDialog = false
+            if (pendingNewAlarm) {
+                pendingNewAlarm = false
+                newAlarm()
+            }
+        },
+        onLater = {
+            pendingNewAlarm = false
+            showPermissionDialog = false
+        }
+    )
 }
 
 private fun clockText(hour: Int, minute: Int) = String.format(Locale.KOREA, "%02d:%02d", hour, minute)

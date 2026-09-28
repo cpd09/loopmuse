@@ -70,6 +70,7 @@ import com.example.loopmuse.community.ui.RecommendationDraft
 import com.example.loopmuse.community.viewmodel.CommunityViewModel
 import com.example.loopmuse.data.MusicFile
 import com.example.loopmuse.service.*
+import com.example.loopmuse.service.alarm.AlarmPlaybackService
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
@@ -173,7 +174,9 @@ fun HomeScreen() {
     var showAlarmDialog by remember { mutableStateOf(false) }
     val backupManager = remember(context) { BackupManager(context.applicationContext) }
     val backupPromptMarker = remember(context) { File(context.noBackupFilesDir, "backup_setup_prompt_v3") }
+    val alarmPermissionMarker = remember(context) { File(context.noBackupFilesDir, ALARM_PERMISSION_INTRO_MARKER) }
     var showBackupSetup by remember { mutableStateOf(false) }
+    var showAlarmPermissionIntro by remember { mutableStateOf(false) }
 
     LaunchedEffect(isServiceConnected) {
         if (isServiceConnected) {
@@ -187,6 +190,16 @@ fun HomeScreen() {
         if (isServiceConnected && (backupManager.isSetupPending() ||
                 (hasPermissions && !backupPromptMarker.exists() && !backupManager.hasBackupFolder()))) {
             showBackupSetup = true
+        }
+    }
+
+    LaunchedEffect(hasPermissions, isServiceConnected, showBackupSetup) {
+        if (hasPermissions && isServiceConnected && !showBackupSetup &&
+            (backupPromptMarker.exists() || backupManager.hasBackupFolder()) &&
+            !alarmPermissionMarker.exists()) {
+            AlarmPlaybackService.ensureNotificationChannel(context)
+            if (readAlarmPermissionStatus(context).ready) alarmPermissionMarker.writeText("done")
+            else showAlarmPermissionIntro = true
         }
     }
 
@@ -899,6 +912,17 @@ fun HomeScreen() {
             showBackupSetup = false
         },
         onRestore = { uri, mode -> musicServiceConnection.restoreUserData(uri, mode) }
+    )
+    if (showAlarmPermissionIntro && !showBackupSetup) AlarmPermissionDialog(
+        continueLabel = "완료",
+        onReady = {
+            alarmPermissionMarker.writeText("done")
+            showAlarmPermissionIntro = false
+        },
+        onLater = {
+            alarmPermissionMarker.writeText("later")
+            showAlarmPermissionIntro = false
+        }
     )
 }
 
