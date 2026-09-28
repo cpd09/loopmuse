@@ -70,13 +70,15 @@ class BackupManager(private val context: Context, private val database: AppDatab
         private val operationMutex = Mutex()
         const val CURRENT_FILE = "loopmuse_current.json"
         const val RECOVERY_FOLDER = "LoopMuse_Recovery"
-        const val RECOMMENDED_FOLDER = "LoopMuse"
+        const val RECOMMENDED_FOLDER = "LoopMuse_backup"
         private const val PREVIOUS_FILE = "loopmuse_previous.json"
     }
 
     private val gson = Gson()
     private val prefs = context.getSharedPreferences("backup_prefs", Context.MODE_PRIVATE)
     private val mutex = operationMutex
+    private val setupMarker = File(context.noBackupFilesDir, "backup_setup_prompt_v3")
+    private val oldSetupMarker = File(context.noBackupFilesDir, "backup_setup_prompt_v2")
     private var watcherJobs = listOf<Job>()
     private var listeners = listOf<Pair<SharedPreferences, SharedPreferences.OnSharedPreferenceChangeListener>>()
 
@@ -103,6 +105,7 @@ class BackupManager(private val context: Context, private val database: AppDatab
     fun lastBackupTime(): Long = prefs.getLong("last_success", 0L)
     fun lastError(): String? = prefs.getString("last_error", null)
     fun lastAlarmWarning(): String? = prefs.getString("alarm_warning", null)
+
     suspend fun localSummary(): LocalDataInfo = withContext(Dispatchers.IO) {
         LocalDataInfo(database.songMetaDao().getAllMetadata().first().size,
             playlistObject(context.getSharedPreferences("playback_queue_v5", Context.MODE_PRIVATE)
@@ -118,6 +121,28 @@ class BackupManager(private val context: Context, private val database: AppDatab
         }
     }
 
+    /** Decide before the first write, so a fresh install cannot replace an existing backup. */
+    suspend fun recommendedRestoreMode(info: BackupInfo): RestoreMode? = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            require(info.valid) { "이전 데이터를 읽을 수 없습니다." }
+            val decoded = decode(readText(info.uri))
+            if (decoded.legacy) return@withLock RestoreMode.MERGE
+            val current = capture()
+            if (JsonParser.parseString(gson.toJson(current)) ==
+                JsonParser.parseString(gson.toJson(decoded.payload))) return@withLock null
+            val localIsNewer = hasMeaningfulUserData(current) &&
+                prefs.getLong("last_success", 0L) >= decoded.createdAt
+            if (localIsNewer) null else RestoreMode.REPLACE
+        }
+    }
+
+    private fun hasMeaningfulUserData(data: Payload): Boolean =
+        data.songs.isNotEmpty() || data.alarms.isNotEmpty() || data.selectedItems.isNotEmpty() ||
+            data.playedSongIds.isNotEmpty() || data.lastPlayed.isNotEmpty() ||
+            data.currentPlaylistId != "ALL" ||
+            playlistObject(data.playlistsJson).entrySet().any { it.key != "ALL" } ||
+            data.alarmGlobalConfig != AlarmGlobalConfig()
+
     private fun storedFolderUri(): Uri? {
         val uri = prefs.getString("folder_uri", null)?.let(Uri::parse) ?: return null
         return uri.takeIf { candidate -> context.contentResolver.persistedUriPermissions.any {
@@ -125,9 +150,23 @@ class BackupManager(private val context: Context, private val database: AppDatab
         } }
     }
 
-    private fun savedFolderUri(): Uri? = if (isSetupPending()) null else storedFolderUri()
+    private fun automaticBackupAllowed(): Boolean = if (setupMarker.exists()) {
+        runCatching { setupMarker.readText().trim() == "done" }.getOrDefault(false)
+    } else oldSetupMarker.exists()
+
+    private fun savedFolderUri(): Uri? =
+        if (isSetupPending() || !automaticBackupAllowed()) null else storedFolderUri()
 
     private fun savedSubfolder(): String? = prefs.getString("folder_subfolder", null)
+
+    private fun isDocumentsRoot(uri: Uri): Boolean =
+        uri.authority == "com.android.externalstorage.documents" &&
+            runCatching { DocumentsContract.getTreeDocumentId(uri) }.getOrNull() == "primary:Documents"
+
+    private fun isRecommendedFolder(uri: Uri): Boolean =
+        uri.authority == "com.android.externalstorage.documents" &&
+            runCatching { DocumentsContract.getTreeDocumentId(uri) }.getOrNull() ==
+                "primary:Documents/$RECOMMENDED_FOLDER"
 
     private fun backupDirectory(treeUri: Uri, subfolder: String?, create: Boolean = false): DocumentFile? {
         val tree = DocumentFile.fromTreeUri(context, treeUri) ?: return null
@@ -272,10 +311,12 @@ class BackupManager(private val context: Context, private val database: AppDatab
             wasPending
         }
         try {
+            val isDocuments = isDocumentsRoot(uri)
+            require(!recommended || isDocuments || isRecommendedFolder(uri)) {
+                "문서 폴더에서 '이 폴더 사용'을 눌러주세요."
+            }
             context.contentResolver.takePersistableUriPermission(uri,
                 Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-            val isDocuments = uri.authority == "com.android.externalstorage.documents" &&
-                runCatching { DocumentsContract.getTreeDocumentId(uri) }.getOrNull() == "primary:Documents"
             val subfolder = if (recommended && isDocuments) RECOMMENDED_FOLDER else null
             val path = displayFolderPath(uri) + if (subfolder == null) "" else "/$subfolder"
             val backups = if (scanBackups) listBackups(uri, subfolder) + listRecoveryBackups(uri, subfolder)
@@ -311,6 +352,7 @@ class BackupManager(private val context: Context, private val database: AppDatab
                 .remove("setup_pending")
                 .apply { if (candidate.subfolder == null) remove("folder_subfolder") else putString("folder_subfolder", candidate.subfolder) }
                 .commit()) { "백업 폴더 설정을 저장하지 못했습니다." }
+            setupMarker.writeText("done")
             info
         }
     }
@@ -375,6 +417,7 @@ class BackupManager(private val context: Context, private val database: AppDatab
                     .remove("last_error")
             }
             check(editor.commit()) { "백업 경로를 저장하지 못했습니다." }
+            setupMarker.writeText("done")
             if (!sameFolder && source != null) source.delete()
             movedHistory.forEach { it.delete() }
             result

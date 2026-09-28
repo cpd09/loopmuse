@@ -30,7 +30,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -295,11 +294,11 @@ private fun AlarmRingingScreen(
             },
                 fontSize = 17.sp, fontWeight = FontWeight.Medium, color = softWhite)
             Spacer(Modifier.height(12.dp))
-            Button(
+            AppButton(
                 onClick = onSnooze,
                 enabled = !actionPending && !isChaseMode,
                 modifier = Modifier.fillMaxWidth().height(56.dp),
-                shape = RoundedCornerShape(20.dp),
+                border = BorderStroke(0.5.dp, lavender.copy(alpha = 0.6f)),
                 colors = ButtonDefaults.buttonColors(containerColor = lavender, contentColor = nightBackground,
                     disabledContainerColor = lavender.copy(alpha = 0.25f),
                     disabledContentColor = softWhite.copy(alpha = 0.65f))

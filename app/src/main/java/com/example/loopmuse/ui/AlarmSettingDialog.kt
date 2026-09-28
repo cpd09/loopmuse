@@ -581,11 +581,12 @@ fun AlarmSettingDialog(
                     }
                 }
                 Spacer(Modifier.height(6.dp))
-                Surface(shape = RoundedCornerShape(16.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                    shadowElevation = 2.dp,
+                Surface(shape = AppCardStyle.shape,
+                    border = AppCardStyle.border(),
+                    shadowElevation = AppCardStyle.elevation,
                     modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+                Column(Modifier.padding(horizontal = AppCardStyle.compactHorizontalPadding,
+                    vertical = AppCardStyle.compactVerticalPadding)) {
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("알람목록", fontSize = 16.sp, fontWeight = FontWeight.Bold,
                         modifier = Modifier.weight(1f))
@@ -698,12 +699,13 @@ fun AlarmSettingDialog(
                 }
                 if (isEditing) {
                 Spacer(Modifier.height(14.dp))
-                Surface(shape = RoundedCornerShape(16.dp),
+                Surface(shape = AppCardStyle.shape,
                     color = MaterialTheme.colorScheme.surface,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                    shadowElevation = 2.dp,
+                    border = AppCardStyle.border(),
+                    shadowElevation = AppCardStyle.elevation,
                     modifier = Modifier.fillMaxWidth().weight(1f, fill = false)) {
-                Column(modifier = Modifier.padding(8.dp)) {
+                Column(modifier = Modifier.padding(horizontal = AppCardStyle.compactHorizontalPadding,
+                    vertical = AppCardStyle.compactVerticalPadding)) {
                 Row(modifier = Modifier.padding(horizontal = 8.dp),
                     verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Alarm, contentDescription = null,
@@ -737,12 +739,12 @@ fun AlarmSettingDialog(
                     Spacer(Modifier.height(12.dp))
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(
+                        AppOutlinedButton(
                             onClick = { showTimePicker = true },
                             modifier = Modifier.height(38.dp),
                             contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp)
                         ) { Text(clockText(hour, minute), fontSize = 16.sp, fontWeight = FontWeight.Bold) }
-                        OutlinedButton(
+                        AppOutlinedButton(
                             onClick = { days = if (days.size == 7) emptySet() else (1..7).toSet() },
                             modifier = Modifier.size(width = 36.dp, height = 34.dp),
                             contentPadding = PaddingValues(0.dp)
@@ -759,12 +761,13 @@ fun AlarmSettingDialog(
                         }
                     }
                     Spacer(Modifier.height(8.dp))
-                    Surface(shape = RoundedCornerShape(16.dp),
+                    Surface(shape = AppCardStyle.shape,
                         color = MaterialTheme.colorScheme.surface,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                        shadowElevation = 2.dp,
+                        border = AppCardStyle.border(),
+                        shadowElevation = AppCardStyle.elevation,
                         modifier = Modifier.fillMaxWidth()) {
-                        Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+                        Column(modifier = Modifier.padding(horizontal = AppCardStyle.compactHorizontalPadding,
+                            vertical = AppCardStyle.compactVerticalPadding)) {
                     Row(modifier = Modifier.fillMaxWidth().heightIn(min = 32.dp),
                         verticalAlignment = Alignment.CenterVertically) {
                         Text("곡", fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(29.dp))
@@ -830,7 +833,7 @@ fun AlarmSettingDialog(
                                     "LIGHT" to "무음(화면)",
                                     "PHONE" to "휴대폰 모드"
                                 )
-                                OutlinedButton(onClick = { soundMenuExpanded = true },
+                                AppOutlinedButton(onClick = { soundMenuExpanded = true },
                                     modifier = Modifier.fillMaxWidth().height(38.dp),
                                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
                                     Text(choices.firstOrNull { it.first == soundMode }?.second ?: choices.first().second,
@@ -861,16 +864,16 @@ fun AlarmSettingDialog(
                 Row(modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center) {
-                    OutlinedButton(onClick = ::closeEditor,
+                    AppOutlinedButton(onClick = ::closeEditor,
                         modifier = Modifier.width(footerButtonWidth).height(36.dp),
                         contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp)) {
                         Text("취소", fontSize = 12.sp)
                     }
                     Spacer(Modifier.width(10.dp))
-                    if (selectedAlarm != null) OutlinedButton(
+                    if (selectedAlarm != null) AppOutlinedButton(
                         onClick = {
-                            val source = selectedAlarm ?: return@OutlinedButton
-                            if (!canEnableAlarm()) return@OutlinedButton
+                            val source = selectedAlarm ?: return@AppOutlinedButton
+                            if (!canEnableAlarm()) return@AppOutlinedButton
                             stopPreview()
                             isSaving = true
                             scope.launch {
@@ -893,12 +896,12 @@ fun AlarmSettingDialog(
                         contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp)
                     ) { Text("복사", fontSize = 12.sp) }
                     if (selectedAlarm != null) Spacer(Modifier.width(10.dp))
-                    Button(onClick = {
+                    AppButton(onClick = {
                         val enabledAfterSave = selectedAlarm?.isEnabled ?: true
-                        if (enabledAfterSave && !canEnableAlarm()) return@Button
+                        if (enabledAfterSave && !canEnableAlarm()) return@AppButton
                         if (songDurationMs > 0L && (endPositionMs <= startPositionMs || endPositionMs > songDurationMs)) {
                             Toast.makeText(context, "곡 구간을 다시 선택해 주세요.", Toast.LENGTH_SHORT).show()
-                            return@Button
+                            return@AppButton
                         }
                         val wholeSong = songDurationMs > 0L && startPositionMs == 0L && endPositionMs == songDurationMs
                         val global = AlarmGlobalSettings.read(context)

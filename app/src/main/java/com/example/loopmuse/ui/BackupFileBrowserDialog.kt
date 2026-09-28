@@ -22,7 +22,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -127,7 +126,7 @@ fun BackupFileBrowserDialog(manager: BackupManager, onSelected: (Uri) -> Unit, o
                         }
                     }
                 }
-                OutlinedButton(onClick = { phonePicker.launch(arrayOf("application/json", "*/*")) },
+                AppOutlinedButton(onClick = { phonePicker.launch(arrayOf("application/json", "*/*")) },
                     modifier = Modifier.fillMaxWidth()) {
                     Text("휴대폰 파일 선택기 열기")
                 }

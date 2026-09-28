@@ -7,10 +7,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -64,15 +62,15 @@ fun BackupLocationDialog(manager: BackupManager, onSaved: () -> Unit, onCancel: 
                 val location = candidate?.path ?: manager.backupFolderPath()
                 Text(location?.let { "$it/${BackupManager.CURRENT_FILE}" } ?: "경로를 선택해 주세요")
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(enabled = !busy, onClick = { chooseFolder(true) }) { Text("권장 경로") }
-                    OutlinedButton(enabled = !busy, onClick = { chooseFolder(false) }) { Text("다른 경로") }
+                    AppOutlinedButton(enabled = !busy, onClick = { chooseFolder(true) }) { Text("권장 경로") }
+                    AppOutlinedButton(enabled = !busy, onClick = { chooseFolder(false) }) { Text("다른 경로") }
                 }
                 if (busy) CircularProgressIndicator()
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
         },
-        confirmButton = { Button(enabled = !busy && candidate != null, onClick = {
-            val chosen = candidate ?: return@Button
+        confirmButton = { AppButton(enabled = !busy && candidate != null, onClick = {
+            val chosen = candidate ?: return@AppButton
             scope.launch {
                 busy = true
                 error = null

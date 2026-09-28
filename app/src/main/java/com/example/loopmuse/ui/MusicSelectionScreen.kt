@@ -81,7 +81,7 @@ fun MusicSelectionScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("${selectedItems.size}개 선택됨", fontSize = 14.sp)
-                    Button(onClick = { onSelectionApplied(selectedItems.values.toList()) }) {
+                    AppButton(onClick = { onSelectionApplied(selectedItems.values.toList()) }) {
                         Text("선택완료")
                     }
                 }

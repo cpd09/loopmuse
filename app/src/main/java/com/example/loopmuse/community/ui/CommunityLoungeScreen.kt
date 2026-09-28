@@ -5,17 +5,22 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -27,10 +32,18 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.loopmuse.community.model.SongPost
 import com.example.loopmuse.community.viewmodel.CommunityViewModel
+import com.example.loopmuse.ui.AppButton
+import com.example.loopmuse.ui.AppOutlinedButton
+import com.example.loopmuse.ui.AppCard
+import com.example.loopmuse.ui.AppCardStyle
+import com.example.loopmuse.ui.AppFolderTab
+import com.example.loopmuse.ui.SoftBlueFolderColor
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -56,6 +69,7 @@ fun RecommendationComposer(
     forSongDialog: Boolean = false,
     messagePlaceholder: String = "좋았던 곡이나 오늘의 한마디를 남겨 주세요"
 ) {
+    val context = LocalContext.current
     val showSongFields = requireSong || alwaysShowSongFields || draft.includeSong
     val messageValid = draft.message.trim().isNotEmpty() && draft.message.length <= 500
     val artistProvided = draft.artist.trim().isNotEmpty()
@@ -121,11 +135,13 @@ fun RecommendationComposer(
                 )
             }
             Text(
-                if (requireSong) "글 하단에 가수명과 곡 제목으로 YouTube 검색 링크가 표시됩니다."
-                else if (artistProvided != titleProvided) "링크를 넣으려면 가수명과 곡 제목을 모두 입력해 주세요."
+                if ((requireSong && (!artistProvided || !titleProvided)) || artistProvided != titleProvided)
+                    "곡을 추천하려면 가수명과 곡 제목을 모두 입력해 주세요."
+                else if (requireSong) "글 하단에 가수명과 곡 제목으로 YouTube 검색 링크가 표시됩니다."
                 else "두 칸을 비우면 글만, 모두 입력하면 YouTube 검색 링크가 함께 게시됩니다.",
                 style = MaterialTheme.typography.bodySmall,
-                color = if (!requireSong && artistProvided != titleProvided) MaterialTheme.colorScheme.error
+                color = if ((requireSong && (!artistProvided || !titleProvided)) || artistProvided != titleProvided)
+                    MaterialTheme.colorScheme.error
                     else MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
@@ -134,12 +150,35 @@ fun RecommendationComposer(
             Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
 
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            Button(onClick = onPublish, enabled = messageValid && songValid && !isSubmitting) {
-                if (isSubmitting) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                } else {
-                    Text("게시")
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val compact = maxWidth < 300.dp
+            val actionFontSize = if (compact) 12.sp else 14.sp
+            val actionPadding = PaddingValues(horizontal = if (compact) 8.dp else 12.dp, vertical = 8.dp)
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                if (showSongFields) {
+                    AppOutlinedButton(
+                        onClick = { openYouTubeSearch(context, draft.artist, draft.title) },
+                        enabled = artistProvided && titleProvided && !isSubmitting,
+                        modifier = if (compact) Modifier.weight(1f) else Modifier,
+                        contentPadding = actionPadding
+                    ) {
+                        Text("유튜브 검색테스트", fontSize = actionFontSize,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                Spacer(if (compact && showSongFields) Modifier.width(8.dp) else Modifier.weight(1f))
+                AppButton(
+                    onClick = onPublish,
+                    enabled = messageValid && songValid && !isSubmitting,
+                    modifier = if (compact && showSongFields) Modifier.weight(0.65f) else Modifier,
+                    contentPadding = actionPadding
+                ) {
+                    if (isSubmitting) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    } else {
+                        Text("저장하기", fontSize = actionFontSize,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
                 }
             }
         }
@@ -201,9 +240,17 @@ fun CommunityLoungeScreen(
     var message by rememberSaveable { mutableStateOf("") }
     var artist by rememberSaveable { mutableStateOf("") }
     var title by rememberSaveable { mutableStateOf("") }
+    var showComposer by rememberSaveable { mutableStateOf(false) }
     var isSubmitting by remember { mutableStateOf(false) }
     var publishError by remember { mutableStateOf<String?>(null) }
     val draft = RecommendationDraft(message, artist, title)
+    val postsFolderColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+    val writeFolderColor = SoftBlueFolderColor
+    val postsListState = rememberLazyListState()
+
+    BackHandler(enabled = showComposer) {
+        if (!isSubmitting) showComposer = false
+    }
 
     if (errorMessage != null) {
         AlertDialog(
@@ -219,64 +266,52 @@ fun CommunityLoungeScreen(
             TopAppBar(
                 title = { Text("LoopMuse Lounge", fontWeight = FontWeight.Bold) },
                 navigationIcon = {
-                    IconButton(onClick = onBackPressed) {
+                    IconButton(onClick = { if (showComposer) {
+                        if (!isSubmitting) showComposer = false
+                    } else onBackPressed() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로")
                     }
                 }
             )
         }
     ) { padding ->
-        BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(padding).imePadding()) {
-            val composerMaxHeight = maxHeight * 0.62f
-            Column(modifier = Modifier.fillMaxSize()) {
-                LazyColumn(
-                    modifier = Modifier.fillMaxWidth().weight(1f),
-                    contentPadding = PaddingValues(top = 16.dp, bottom = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    item {
-                        Text(
-                            "게시글",
-                            modifier = Modifier.padding(horizontal = 20.dp),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                    if (posts.isEmpty()) {
-                        item {
-                            Text(
-                                "아직 글이 없습니다. 첫 글을 남겨 주세요.",
-                                modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    } else {
-                        items(posts, key = { it.id }) { post ->
-                            SongPostCard(
-                                post = post,
-                                isAdmin = isAdmin,
-                                onDelete = { viewModel.deletePost(post.id) },
-                                onBanUser = { viewModel.banUser(post.uid) },
-                                onReport = { reason -> viewModel.reportPost(post.id, reason) }
-                            )
-                        }
-                    }
-                }
-
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
-                    tonalElevation = 4.dp,
-                    shadowElevation = 6.dp
-                ) {
+        Column(modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Bottom,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                AppFolderTab(
+                    label = "게시글",
+                    icon = Icons.Default.List,
+                    selected = !showComposer,
+                    folderColor = postsFolderColor,
+                    enabled = !isSubmitting,
+                    onClick = { showComposer = false },
+                    modifier = Modifier.weight(1f)
+                )
+                AppFolderTab(
+                    label = "글 남기기",
+                    icon = Icons.Default.Edit,
+                    selected = showComposer,
+                    folderColor = writeFolderColor,
+                    enabled = !isSubmitting,
+                    onClick = { showComposer = true },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Surface(
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                shape = RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp),
+                color = if (showComposer) writeFolderColor else postsFolderColor,
+                tonalElevation = 2.dp
+            ) {
+                if (showComposer) {
                     Column(
-                        modifier = Modifier.heightIn(max = composerMaxHeight)
-                            .verticalScroll(rememberScrollState())
-                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                        modifier = Modifier.fillMaxSize().imePadding()
+                            .verticalScroll(rememberScrollState()).padding(AppCardStyle.horizontalPadding),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text("글 남기기", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Spacer(modifier = Modifier.height(8.dp))
                         RecommendationComposer(
                             draft = draft,
                             onDraftChange = {
@@ -294,22 +329,44 @@ fun CommunityLoungeScreen(
                                 scope.launch {
                                     isSubmitting = true
                                     publishError = null
-                                    val result = viewModel.addPost(
-                                        draft.message,
-                                        draft.title,
-                                        draft.artist
-                                    )
+                                    val result = viewModel.addPost(draft.message, draft.title, draft.artist)
                                     isSubmitting = false
                                     if (result.isSuccess) {
                                         message = ""
                                         artist = ""
                                         title = ""
+                                        showComposer = false
                                     } else {
                                         publishError = result.exceptionOrNull()?.message ?: "게시하지 못했습니다."
                                     }
                                 }
                             }
                         )
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        state = postsListState,
+                        contentPadding = PaddingValues(top = 8.dp, bottom = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        if (posts.isEmpty()) {
+                            item {
+                                Text("아직 글이 없습니다. 첫 글을 남겨 주세요.",
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 16.dp),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        } else {
+                            items(posts, key = { it.id }) { post ->
+                                SongPostCard(
+                                    post = post,
+                                    isAdmin = isAdmin,
+                                    onDelete = { viewModel.deletePost(post.id) },
+                                    onBanUser = { viewModel.banUser(post.uid) },
+                                    onReport = { reason -> viewModel.reportPost(post.id, reason) }
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -336,6 +393,7 @@ fun SongPostCard(
     }
     var showMenu by remember { mutableStateOf(false) }
     var showReportDialog by remember { mutableStateOf(false) }
+    var isExpanded by rememberSaveable(post.id) { mutableStateOf(false) }
 
     if (showReportDialog) {
         var reason by remember { mutableStateOf("") }
@@ -363,18 +421,23 @@ fun SongPostCard(
         )
     }
 
-    Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+    AppCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
+        Column(modifier = Modifier.padding(horizontal = AppCardStyle.horizontalPadding,
+            vertical = AppCardStyle.compactVerticalPadding),
+            verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     displayName + " · " + postedAt,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
                 Box {
-                    IconButton(onClick = { showMenu = true }) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "글 메뉴")
+                    IconButton(onClick = { showMenu = true }, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "글 메뉴",
+                            modifier = Modifier.size(18.dp))
                     }
                     DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
                         if (isAdmin) {
@@ -397,18 +460,24 @@ fun SongPostCard(
             }
 
             if (post.message.isNotBlank()) {
-                Text(post.message, style = MaterialTheme.typography.bodyLarge)
+                Text(if (isExpanded) post.message else post.message.replace('\n', ' ').trim(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = if (isExpanded) Int.MAX_VALUE else 1,
+                    overflow = if (isExpanded) TextOverflow.Clip else TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth().clickable(
+                        onClickLabel = if (isExpanded) "글 접기" else "글 펼치기"
+                    ) { isExpanded = !isExpanded })
             }
 
             if (hasSong) {
                 Text(
-                    "♪ " + post.artist + " · " + post.title,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                TextButton(onClick = { openYouTubeSearch(context, post.artist, post.title) }) {
-                    Text("YouTube에서 이 곡 검색 ↗")
-                }
+                    "♪ ${post.artist} · ${post.title} ↗",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        openYouTubeSearch(context, post.artist, post.title)
+                    })
             }
         }
     }

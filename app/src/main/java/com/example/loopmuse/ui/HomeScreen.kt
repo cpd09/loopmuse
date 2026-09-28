@@ -25,6 +25,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
 import androidx.compose.foundation.text.BasicTextField
@@ -43,13 +44,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalTextToolbar
 import androidx.compose.ui.platform.TextToolbar
 import androidx.compose.ui.platform.TextToolbarStatus
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -74,6 +79,9 @@ import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+
+private val defaultVibeTags = listOf("잔잔한", "신나는", "차분한", "편안한", "즐거운", "위로", "몽환적")
+private val defaultOccasionTags = listOf("공부할때", "일할때", "드라이브", "커피한잔", "운동할때", "휴식할때", "비오는날")
 
 @OptIn(ExperimentalPermissionsApi::class, ExperimentalFoundationApi::class)
 @Composable
@@ -133,6 +141,7 @@ fun HomeScreen() {
     var showSearchDialog by remember { mutableStateOf(value = false) }
     var showEditPlaylistDialog by remember { mutableStateOf(value = false) }
     var showLoungeScreen by remember { mutableStateOf(value = false) }
+    var showLoungeAfterRecommendation by remember { mutableStateOf(false) }
     
     var showSettingsScreen by remember { mutableStateOf(false) }
     
@@ -163,7 +172,7 @@ fun HomeScreen() {
     var songForEdit by remember { mutableStateOf<MusicFile?>(null) }
     var showAlarmDialog by remember { mutableStateOf(false) }
     val backupManager = remember(context) { BackupManager(context.applicationContext) }
-    val backupPromptMarker = remember(context) { File(context.noBackupFilesDir, "backup_setup_prompt_v2") }
+    val backupPromptMarker = remember(context) { File(context.noBackupFilesDir, "backup_setup_prompt_v3") }
     var showBackupSetup by remember { mutableStateOf(false) }
 
     LaunchedEffect(isServiceConnected) {
@@ -180,7 +189,7 @@ fun HomeScreen() {
             showBackupSetup = true
         }
     }
-    
+
     LaunchedEffect(Unit) { musicServiceConnection.bindService() }
     DisposableEffect(Unit) { onDispose { musicServiceConnection.unbindService() } }
 
@@ -212,11 +221,10 @@ fun HomeScreen() {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("🎵 LoopMuse", fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedButton(
+                                AppOutlinedButton(
                                     onClick = { showLoungeScreen = true },
                                     modifier = Modifier.height(28.dp),
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                                    shape = RoundedCornerShape(8.dp)
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
                                 ) {
                                     Text("Lounge", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                 }
@@ -250,7 +258,10 @@ fun HomeScreen() {
                                     Text("ALL", color = Color.Red, fontSize = 9.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(top = 2.dp))
                                 }
                             }
-                            Button(onClick = { if (hasPermissions) showSelectionScreen = true else storagePermissionState.launchPermissionRequest() }, modifier = Modifier.weight(1f)) {
+                            AppButton(
+                                onClick = { if (hasPermissions) showSelectionScreen = true else storagePermissionState.launchPermissionRequest() },
+                                modifier = Modifier.weight(1f)
+                            ) {
                                 Text("곡,폴더 선택 ($songCounts)")
                             }
                             IconButton(onClick = { showExitDialog = true }, modifier = Modifier.size(48.dp)) {
@@ -266,7 +277,7 @@ fun HomeScreen() {
                     Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) { Text("서비스 연결 중...") }
                 } else if (!hasPermissions) {
                     Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                        Button(onClick = { storagePermissionState.launchPermissionRequest() }) { Text("저장소 권한 허용") }
+                        AppButton(onClick = { storagePermissionState.launchPermissionRequest() }) { Text("저장소 권한 허용") }
                     }
                 } else {
                     Spacer(modifier = Modifier.height(12.dp))
@@ -380,7 +391,28 @@ fun HomeScreen() {
         SongEditDialog(
             song = song,
             connection = musicServiceConnection,
-            onDismiss = { songForEdit = null }
+            onDismiss = { songForEdit = null },
+            onRecommendationPublished = {
+                songForEdit = null
+                showLoungeAfterRecommendation = true
+            }
+        )
+    }
+
+    if (showLoungeAfterRecommendation) {
+        AlertDialog(
+            onDismissRequest = { showLoungeAfterRecommendation = false },
+            title = { Text("곡 추천 완료") },
+            text = { Text("곡 추천을 게시했습니다. 라운지로 이동할까요?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showLoungeAfterRecommendation = false
+                    showLoungeScreen = true
+                }) { Text("이동") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLoungeAfterRecommendation = false }) { Text("나중에") }
+            }
         )
     }
 
@@ -391,8 +423,8 @@ fun HomeScreen() {
         var selectedVibes by remember { mutableStateOf(setOf<String>()) }
         var selectedOccasions by remember { mutableStateOf(setOf<String>()) }
         
-        val defaultVibes = listOf("신남", "차분", "분위기", "발랄", "우울", "몽환", "강렬")
-        val defaultOccasions = listOf("비오는날", "여행", "드라이브", "일할때", "운동", "휴식", "출퇴근")
+        val defaultVibes = defaultVibeTags
+        val defaultOccasions = defaultOccasionTags
         var allVibes by remember { mutableStateOf(defaultVibes) }
         var allOccasions by remember { mutableStateOf(defaultOccasions) }
 
@@ -449,11 +481,10 @@ fun HomeScreen() {
                         ) {
                             var categoryExpanded by remember { mutableStateOf(false) }
                             Box(modifier = Modifier.weight(0.35f)) {
-                                OutlinedButton(
+                                AppOutlinedButton(
                                     onClick = { categoryExpanded = true },
                                     modifier = Modifier.fillMaxWidth().height(40.dp),
-                                    contentPadding = PaddingValues(horizontal = 8.dp),
-                                    shape = RoundedCornerShape(8.dp)
+                                    contentPadding = PaddingValues(horizontal = 8.dp)
                                 ) {
                                     Text(text = searchType, fontSize = 12.sp, modifier = Modifier.weight(1f))
                                     Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -496,8 +527,13 @@ fun HomeScreen() {
                         Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .clickable { isLikedOnly = !isLikedOnly },
+                                .semantics {
+                                    contentDescription = "좋아요 한 곡만 보기"
+                                    stateDescription = if (isLikedOnly) "켜짐" else "꺼짐"
+                                }
+                                .toggleable(value = isLikedOnly, role = Role.Switch) {
+                                    isLikedOnly = it
+                                },
                             color = if (isLikedOnly) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f) else Color.Transparent,
                             shape = RoundedCornerShape(10.dp)
                         ) {
@@ -507,22 +543,20 @@ fun HomeScreen() {
                                     .padding(horizontal = 8.dp, vertical = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
+                                AppCompactSwitchIndicator(isLikedOnly)
+                                Spacer(modifier = Modifier.width(8.dp))
                                 Icon(
-                                    imageVector = if (isLikedOnly) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                    imageVector = Icons.Default.MusicNote,
                                     contentDescription = null,
-                                    tint = if (isLikedOnly) Color.Red else Color.Gray,
+                                    tint = Color.Red,
                                     modifier = Modifier.size(20.dp)
                                 )
-                                Spacer(modifier = Modifier.width(8.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
                                 Text(
                                     text = "좋아요 한 곡만 보기",
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     modifier = Modifier.weight(1f)
-                                )
-                                Checkbox(
-                                    checked = isLikedOnly,
-                                    onCheckedChange = { isLikedOnly = it }
                                 )
                             }
                         }
@@ -548,6 +582,7 @@ fun HomeScreen() {
                                 val isSelected = selectedVibes.contains(vibe)
                                 FilterChip(
                                     selected = isSelected,
+                                    shape = AppButtonStyle.shape,
                                     onClick = {
                                         selectedVibes = if (isSelected) selectedVibes - vibe else selectedVibes + vibe
                                     },
@@ -578,6 +613,7 @@ fun HomeScreen() {
                                 val isSelected = selectedOccasions.contains(occasion)
                                 FilterChip(
                                     selected = isSelected,
+                                    shape = AppButtonStyle.shape,
                                     onClick = {
                                         selectedOccasions = if (isSelected) selectedOccasions - occasion else selectedOccasions + occasion
                                     },
@@ -589,36 +625,21 @@ fun HomeScreen() {
 
                         Spacer(modifier = Modifier.height(20.dp))
 
-                        // Bottom Actions: [초기화] [취소] [검색]
+                        // Bottom Actions: [취소] [검색]
                         val canSearch = localSearchQuery.isNotBlank() || isLikedOnly || selectedVibes.isNotEmpty() || selectedOccasions.isNotEmpty()
                         Row(
                             modifier = Modifier.fillMaxWidth(), 
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            OutlinedButton(
-                                onClick = {
-                                    localSearchQuery = ""
-                                    isLikedOnly = false
-                                    selectedVibes = emptySet()
-                                    selectedOccasions = emptySet()
-                                    searchType = "전체"
-                                },
-                                modifier = Modifier.weight(0.28f).height(38.dp),
-                                shape = RoundedCornerShape(12.dp),
-                                contentPadding = PaddingValues(0.dp)
-                            ) {
-                                Text("초기화", fontSize = 12.sp)
-                            }
-                            OutlinedButton(
+                            AppOutlinedButton(
                                 onClick = { showSearchDialog = false },
-                                modifier = Modifier.weight(0.28f).height(38.dp), 
-                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.weight(0.4f).height(38.dp),
                                 contentPadding = PaddingValues(0.dp)
                             ) {
                                 Text("취소", fontSize = 12.sp, fontWeight = FontWeight.Medium)
                             }
-                            Button(
+                            AppButton(
                                 onClick = { 
                                     musicServiceConnection.searchWithFilters(
                                         query = localSearchQuery.trim(),
@@ -630,8 +651,7 @@ fun HomeScreen() {
                                     showSearchDialog = false 
                                 },
                                 enabled = canSearch,
-                                modifier = Modifier.weight(0.44f).height(38.dp), 
-                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.weight(0.6f).height(38.dp),
                                 contentPadding = PaddingValues(0.dp)
                             ) {
                                 Text("검색", fontSize = 13.sp, fontWeight = FontWeight.Bold)
@@ -685,7 +705,7 @@ fun HomeScreen() {
                             var expanded by remember { mutableStateOf(false) }
                             val userPlaylists = allPlaylists.filter { it.id != "ALL" }
                             Box(modifier = Modifier.weight(1f)) {
-                                OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth().height(32.dp), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
+                                AppOutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth().height(32.dp), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
                                     Text(text = userPlaylists.find { it.id == selectedPlaylistIdForEdit }?.name ?: "리스트 선택", fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                                     Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(16.dp))
                                 }
@@ -728,7 +748,7 @@ fun HomeScreen() {
                                     }
                                 }
                             )
-                            Button(
+                            AppButton(
                                 onClick = { 
                                     val pid = selectedPlaylistIdForEdit
                                     if (pid != null) musicServiceConnection.updateCustomPlaylist(pid, editPlaylistName, editSelectedIds.toList())
@@ -737,8 +757,7 @@ fun HomeScreen() {
                                 },
                                 enabled = editPlaylistName.isNotBlank() && editSelectedIds.size >= 2,
                                 modifier = Modifier.weight(0.3f).height(42.dp),
-                                contentPadding = PaddingValues(0.dp),
-                                shape = RoundedCornerShape(8.dp)
+                                contentPadding = PaddingValues(0.dp)
                             ) {
                                 Text(if (selectedPlaylistIdForEdit != null) "업데이트" else "저장", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                             }
@@ -946,7 +965,7 @@ fun LikedFilterOptionButton(isLiked: Boolean, enabled: Boolean = true, onClick: 
 fun PlaylistCombo(current: PlaylistState?, all: List<PlaylistState>, connection: MusicServiceConnection) {
     var expanded by remember { mutableStateOf(false) }
     Box {
-        OutlinedButton(
+        AppOutlinedButton(
             onClick = { expanded = true }, 
             modifier = Modifier.fillMaxWidth().height(32.dp), 
             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
@@ -955,7 +974,7 @@ fun PlaylistCombo(current: PlaylistState?, all: List<PlaylistState>, connection:
                 current?.name ?: "플레이리스트", 
                 fontSize = 14.sp, 
                 fontWeight = FontWeight.Bold,
-                color = Color.Blue,
+                color = MaterialTheme.colorScheme.primary,
                 textAlign = TextAlign.Center,
                 maxLines = 1, 
                 overflow = TextOverflow.Ellipsis,
@@ -964,7 +983,7 @@ fun PlaylistCombo(current: PlaylistState?, all: List<PlaylistState>, connection:
             Icon(
                 Icons.Default.ArrowDropDown, 
                 contentDescription = null, 
-                tint = Color.Blue,
+                tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(18.dp)
             )
         }
@@ -985,7 +1004,11 @@ fun SortCombo(state: PlaylistState?, connection: MusicServiceConnection) {
         else -> "정렬"
     }
     Box {
-        TextButton(onClick = { expanded = true }, contentPadding = PaddingValues(horizontal = 4.dp), modifier = Modifier.height(32.dp)) {
+        AppOutlinedButton(
+            onClick = { expanded = true },
+            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+            modifier = Modifier.height(32.dp)
+        ) {
             Text(label, fontSize = 11.sp)
             Icon(if (state?.sortOrder == SortOrder.ASCENDING) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(16.dp))
         }
@@ -1006,9 +1029,10 @@ fun SortCombo(state: PlaylistState?, connection: MusicServiceConnection) {
 fun SongEditDialog(
     song: MusicFile,
     connection: MusicServiceConnection,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onRecommendationPublished: () -> Unit
 ) {
-    var selectedTab by remember { mutableIntStateOf(0) }
+    var selectedTab by remember { mutableIntStateOf(1) }
     var recommendation by remember(song.fingerprintId) {
         mutableStateOf(
             RecommendationDraft(
@@ -1025,8 +1049,8 @@ fun SongEditDialog(
     var occasionTags by remember { mutableStateOf(setOf<String>()) }
     var isLoading by remember { mutableStateOf(true) }
     
-    val defaultVibes = listOf("신남", "차분", "분위기", "발랄", "우울", "몽환", "강렬")
-    val defaultOccasions = listOf("비오는날", "여행", "드라이브", "일할때", "운동", "휴식", "출퇴근")
+    val defaultVibes = defaultVibeTags
+    val defaultOccasions = defaultOccasionTags
     
     var newVibeInput by remember { mutableStateOf("") }
     var newOccasionInput by remember { mutableStateOf("") }
@@ -1052,39 +1076,40 @@ fun SongEditDialog(
             color = MaterialTheme.colorScheme.surface,
             tonalElevation = 8.dp
         ) {
-            val folderColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text("곡 정보", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+            val recommendationFolderColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+            val tagFolderColor = SoftBlueFolderColor
+            Column(modifier = Modifier.padding(AppCardStyle.horizontalPadding)) {
+                Text("곡추천&태그편집", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                 Text(song.title, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(12.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.Bottom,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    SongEditFolderTab(
-                        label = "태그 편집",
-                        icon = Icons.Default.Edit,
-                        selected = selectedTab == 0,
-                        folderColor = folderColor,
-                        onClick = { selectedTab = 0 },
-                        modifier = Modifier.weight(1f)
-                    )
-                    SongEditFolderTab(
+                    AppFolderTab(
                         label = "곡 추천",
                         icon = Icons.Default.MusicNote,
                         selected = selectedTab == 1,
-                        folderColor = folderColor,
+                        folderColor = recommendationFolderColor,
                         onClick = { selectedTab = 1 },
+                        modifier = Modifier.weight(1f)
+                    )
+                    AppFolderTab(
+                        label = "태그 편집",
+                        icon = Icons.Default.Edit,
+                        selected = selectedTab == 0,
+                        folderColor = tagFolderColor,
+                        onClick = { selectedTab = 0 },
                         modifier = Modifier.weight(1f)
                     )
                 }
                 Surface(
                     modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
                     shape = RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp),
-                    color = folderColor
+                    color = if (selectedTab == 0) tagFolderColor else recommendationFolderColor
                 ) {
-                    Box(modifier = Modifier.padding(16.dp)) {
+                    Box(modifier = Modifier.padding(AppCardStyle.horizontalPadding)) {
                         if (selectedTab == 1) {
                             val communityViewModel: CommunityViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
                             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
@@ -1105,7 +1130,7 @@ fun SongEditDialog(
                                                 recommendation.artist
                                             )
                                             isSubmitting = false
-                                            if (result.isSuccess) onDismiss()
+                                            if (result.isSuccess) onRecommendationPublished()
                                             else publishError = result.exceptionOrNull()?.message ?: "게시하지 못했습니다."
                                         }
                                     }
@@ -1124,6 +1149,7 @@ fun SongEditDialog(
                                             val isSelected = vibeTags.contains(tag)
                                             FilterChip(
                                                 selected = isSelected,
+                                                shape = AppButtonStyle.shape,
                                                 onClick = { vibeTags = if (isSelected) vibeTags - tag else vibeTags + tag },
                                                 label = { Text(tag, fontSize = 12.sp) }
                                             )
@@ -1150,6 +1176,7 @@ fun SongEditDialog(
                                             val isSelected = occasionTags.contains(tag)
                                             FilterChip(
                                                 selected = isSelected,
+                                                shape = AppButtonStyle.shape,
                                                 onClick = { occasionTags = if (isSelected) occasionTags - tag else occasionTags + tag },
                                                 label = { Text(tag, fontSize = 12.sp) }
                                             )
@@ -1170,7 +1197,7 @@ fun SongEditDialog(
                                 Spacer(modifier = Modifier.height(12.dp))
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                                     TextButton(onClick = onDismiss) { Text("취소") }
-                                    Button(onClick = {
+                                    AppButton(onClick = {
                                         connection.updateSongTags(song.fingerprintId, vibeTags.joinToString(","), occasionTags.joinToString(","))
                                         onDismiss()
                                     }) { Text("저장") }
@@ -1180,35 +1207,6 @@ fun SongEditDialog(
                     }
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun SongEditFolderTab(
-    label: String,
-    icon: ImageVector,
-    selected: Boolean,
-    folderColor: Color,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        onClick = onClick,
-        modifier = modifier.height(if (selected) 52.dp else 44.dp),
-        shape = RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp),
-        color = if (selected) folderColor else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
-        tonalElevation = if (selected) 2.dp else 0.dp
-    ) {
-        Row(
-            modifier = Modifier.fillMaxSize(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
-        ) {
-            val tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
-            Spacer(modifier = Modifier.width(6.dp))
-            Text(label, color = tint, fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium)
         }
     }
 }
@@ -1224,7 +1222,9 @@ fun NowPlayingCardExpanded(
     var currentVolume by remember { mutableFloatStateOf(audioManager.getStreamVolume(android.media.AudioManager.STREAM_MUSIC).toFloat()) }
     val maxVolume = remember { audioManager.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC).toFloat() }
 
-    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f))) {
+    AppCard(modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer
+            .copy(alpha = 0.2f).compositeOver(MaterialTheme.colorScheme.surface))) {
         Column(modifier = Modifier.padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             val title = if (track != null) "${track.title} - ${track.artist}" else "재생 중인 곡 없음"
             Text(text = title, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1, modifier = Modifier.basicMarquee())

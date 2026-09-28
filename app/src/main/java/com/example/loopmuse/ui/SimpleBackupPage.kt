@@ -15,12 +15,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -128,11 +127,15 @@ fun SimpleBackupPage(
 
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("백업파일 경로:", style = MaterialTheme.typography.titleMedium)
-                OutlinedCard(Modifier.fillMaxWidth()) {
-                    Row(Modifier.fillMaxWidth().padding(12.dp),
+        AppCard(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(horizontal = AppCardStyle.horizontalPadding,
+                vertical = AppCardStyle.verticalPadding), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("현재 사용중인 백업파일 경로", style = MaterialTheme.typography.titleMedium)
+                AppCard(Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    elevation = 1.dp) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = AppCardStyle.horizontalPadding,
+                        vertical = AppCardStyle.verticalPadding),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.Top) {
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -173,11 +176,19 @@ fun SimpleBackupPage(
             }
         }
 
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        HorizontalDivider(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+            thickness = 1.dp,
+            color = MaterialTheme.colorScheme.outlineVariant
+        )
+
+        AppCard(Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = SoftBlueFolderColor)) {
+            Column(Modifier.padding(horizontal = AppCardStyle.horizontalPadding,
+                vertical = AppCardStyle.verticalPadding), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("백업파일 목록", style = MaterialTheme.typography.titleLarge)
-                    OutlinedButton(enabled = !busy,
+                    Text("이전 백업파일 목록", style = MaterialTheme.typography.titleMedium)
+                    AppOutlinedButton(enabled = !busy,
                         onClick = { showFileBrowser = true }) {
                         Text("백업파일 찾아보기", style = MaterialTheme.typography.labelMedium)
                     }
@@ -186,8 +197,11 @@ fun SimpleBackupPage(
                     Text(if (loading) "백업파일 확인 중..." else "다른 백업파일이 없습니다.")
                 }
                 allBackups.forEach { info ->
-                    OutlinedCard(Modifier.fillMaxWidth()) {
-                        Row(Modifier.fillMaxWidth().padding(12.dp),
+                    AppCard(Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        elevation = 1.dp) {
+                        Row(Modifier.fillMaxWidth().padding(horizontal = AppCardStyle.horizontalPadding,
+                            vertical = AppCardStyle.verticalPadding),
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalAlignment = Alignment.Top) {
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {

@@ -17,12 +17,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -31,7 +29,6 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Save
-import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -39,7 +36,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
@@ -75,7 +71,7 @@ private fun <T> SettingsDropdownButton(
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box(modifier) {
-        OutlinedButton(onClick = { expanded = true },
+        AppOutlinedButton(onClick = { expanded = true },
             modifier = Modifier.fillMaxWidth().height(32.dp),
             contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp)) {
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -126,14 +122,7 @@ private fun SettingsInlineToggle(
         Text("$title :", modifier = Modifier.width(52.dp), fontSize = 11.sp,
             maxLines = 1, textAlign = TextAlign.Start)
         Spacer(Modifier.width(3.dp))
-        Box(Modifier.width(38.dp).height(30.dp), contentAlignment = Alignment.Center) {
-            Box(Modifier.width(33.dp).height(19.dp).clip(RoundedCornerShape(10.dp))
-                .background(if (checked) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.outline))
-            Box(Modifier.offset(x = if (checked) 7.dp else (-7).dp)
-                .size(15.dp).clip(RoundedCornerShape(50))
-                .background(MaterialTheme.colorScheme.onPrimary))
-        }
+        AppCompactSwitchIndicator(checked)
     }
 }
 
@@ -190,8 +179,9 @@ fun SettingsScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text("백업설정", style = MaterialTheme.typography.titleMedium)
-                Card(Modifier.fillMaxWidth().clickable { page = SettingsPage.DATA }) {
-                    Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                AppCard(Modifier.fillMaxWidth().clickable { page = SettingsPage.DATA }) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = AppCardStyle.horizontalPadding,
+                        vertical = AppCardStyle.verticalPadding), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.Save, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Column(Modifier.weight(1f).padding(start = 16.dp)) {
                             Text("백업 및 복원", style = MaterialTheme.typography.titleMedium)
@@ -203,8 +193,9 @@ fun SettingsScreen(
                 }
                 Spacer(Modifier.height(8.dp))
                 Text("알람설정", style = MaterialTheme.typography.titleMedium)
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                AppCard(Modifier.fillMaxWidth()) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = AppCardStyle.horizontalPadding,
+                        vertical = AppCardStyle.verticalPadding),
                         verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         val percentOptions = (10..100 step 10).map { it to "$it%" }
                         Row(Modifier.fillMaxWidth()
@@ -270,8 +261,9 @@ fun SettingsScreen(
                 }
                 Spacer(Modifier.height(8.dp))
                 Text("앱", style = MaterialTheme.typography.titleMedium)
-                Card(Modifier.fillMaxWidth().clickable { page = SettingsPage.ABOUT }) {
-                    Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                AppCard(Modifier.fillMaxWidth().clickable { page = SettingsPage.ABOUT }) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = AppCardStyle.horizontalPadding,
+                        vertical = AppCardStyle.verticalPadding), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Column(Modifier.weight(1f).padding(start = 16.dp)) {
                             Text("앱 정보", style = MaterialTheme.typography.titleMedium)

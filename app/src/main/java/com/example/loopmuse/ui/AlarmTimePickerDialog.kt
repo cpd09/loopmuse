@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -117,7 +116,7 @@ fun AlarmTimePickerDialog(
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = onDismiss) { Text("취소") }
-                    Button(onClick = { onConfirm(hour, minute) }) { Text("확인") }
+                    AppButton(onClick = { onConfirm(hour, minute) }) { Text("확인") }
                 }
             }
         }
