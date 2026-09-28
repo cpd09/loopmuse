@@ -10,6 +10,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -55,8 +56,13 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import com.example.loopmuse.service.BackupManager
 import com.example.loopmuse.service.RestoreMode
+import com.example.loopmuse.data.SongDisplayConfig
+import com.example.loopmuse.data.SongDisplayField
+import com.example.loopmuse.data.SongDisplaySettings
 import com.example.loopmuse.service.alarm.AlarmGlobalConfig
 import com.example.loopmuse.service.alarm.AlarmGlobalSettings
 
@@ -97,12 +103,15 @@ private fun <T> SettingsInlineDropdown(
     title: String,
     value: T,
     options: List<Pair<T, String>>,
-    buttonWidth: androidx.compose.ui.unit.Dp,
+    buttonWidth: Dp,
+    labelWidth: Dp = 64.dp,
+    labelGap: Dp = 3.dp,
+    labelFontSize: TextUnit = 11.sp,
     onSelect: (T) -> Unit
 ) {
-    Text("$title :", modifier = Modifier.width(64.dp), fontSize = 11.sp,
+    Text("$title :", modifier = Modifier.width(labelWidth), fontSize = labelFontSize,
         maxLines = 1, textAlign = TextAlign.End)
-    Spacer(Modifier.width(3.dp))
+    Spacer(Modifier.width(labelGap))
     SettingsDropdownButton(value, options, Modifier.width(buttonWidth), onSelect)
 }
 
@@ -110,6 +119,10 @@ private fun <T> SettingsInlineDropdown(
 private fun SettingsInlineToggle(
     title: String,
     checked: Boolean,
+    labelWidth: Dp = 52.dp,
+    labelGap: Dp = 3.dp,
+    labelFontSize: TextUnit = 11.sp,
+    switchWidth: Dp = 38.dp,
     onChange: (Boolean) -> Unit
 ) {
     Row(Modifier.height(32.dp)
@@ -119,10 +132,10 @@ private fun SettingsInlineToggle(
         }
         .toggleable(value = checked, role = Role.Switch, onValueChange = onChange),
         verticalAlignment = Alignment.CenterVertically) {
-        Text("$title :", modifier = Modifier.width(52.dp), fontSize = 11.sp,
+        Text("$title :", modifier = Modifier.width(labelWidth), fontSize = labelFontSize,
             maxLines = 1, textAlign = TextAlign.Start)
-        Spacer(Modifier.width(3.dp))
-        AppCompactSwitchIndicator(checked)
+        Spacer(Modifier.width(labelGap))
+        AppCompactSwitchIndicator(checked, width = switchWidth)
     }
 }
 
@@ -150,12 +163,18 @@ fun SettingsScreen(
     val context = LocalContext.current
     val manager = remember(context) { BackupManager(context.applicationContext) }
     var alarmConfig by remember(context) { mutableStateOf(AlarmGlobalSettings.read(context)) }
+    var songDisplayConfig by remember(context) { mutableStateOf(SongDisplaySettings.read(context)) }
     val updateAlarmConfig: (AlarmGlobalConfig) -> Unit = { next ->
         alarmConfig = next
         AlarmGlobalSettings.save(context, next)
     }
     var page by remember { mutableStateOf(SettingsPage.MENU) }
-    val goBack = { if (page == SettingsPage.MENU) onBack() else page = SettingsPage.MENU }
+    val goBack = {
+        if (page == SettingsPage.MENU) onBack() else {
+            page = SettingsPage.MENU
+            songDisplayConfig = SongDisplaySettings.read(context)
+        }
+    }
     BackHandler(onBack = goBack)
 
     Scaffold(
@@ -218,20 +237,55 @@ fun SettingsScreen(
                             }
                         }
                         Spacer(Modifier.height(4.dp))
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Start) {
-                            SettingsInlineToggle("페이드인", alarmConfig.fadeEnabled) {
-                                updateAlarmConfig(alarmConfig.copy(fadeEnabled = it))
+                        BoxWithConstraints(Modifier.fillMaxWidth()) {
+                            val compact = maxWidth < 355.dp
+                            val narrow = maxWidth < 304.dp
+                            val labelWidth = if (compact) 46.dp else 64.dp
+                            val labelGap = if (compact) 1.dp else 3.dp
+                            val labelFontSize = if (compact) 10.sp else 11.sp
+                            val fadeToggle: @Composable () -> Unit = {
+                                SettingsInlineToggle("페이드인", alarmConfig.fadeEnabled,
+                                    labelWidth = if (compact) 46.dp else 52.dp,
+                                    labelGap = labelGap, labelFontSize = labelFontSize,
+                                    switchWidth = if (compact) 34.dp else 38.dp) {
+                                    updateAlarmConfig(alarmConfig.copy(fadeEnabled = it))
+                                }
                             }
-                            Spacer(Modifier.width(6.dp))
-                            SettingsInlineDropdown("시작음량", alarmConfig.fadeStartPercent,
-                                percentOptions.filter { it.first <= alarmConfig.volumePercent }, 48.dp) {
-                                updateAlarmConfig(alarmConfig.copy(fadeStartPercent = it))
+                            val fadeStart: @Composable () -> Unit = {
+                                SettingsInlineDropdown("시작음량", alarmConfig.fadeStartPercent,
+                                    percentOptions.filter { it.first <= alarmConfig.volumePercent },
+                                    if (compact) 56.dp else 48.dp,
+                                    labelWidth = labelWidth, labelGap = labelGap,
+                                    labelFontSize = labelFontSize) {
+                                    updateAlarmConfig(alarmConfig.copy(fadeStartPercent = it))
+                                }
                             }
-                            Spacer(Modifier.width(6.dp))
-                            SettingsInlineDropdown("도달시간", alarmConfig.fadeDurationSeconds,
-                                listOf(5, 10, 15, 20, 30, 45, 60, 90, 120).map { it to "${it}초" }, 51.dp) {
-                                updateAlarmConfig(alarmConfig.copy(fadeDurationSeconds = it))
+                            val fadeDuration: @Composable () -> Unit = {
+                                SettingsInlineDropdown("도달시간", alarmConfig.fadeDurationSeconds,
+                                    listOf(5, 10, 15, 20, 30, 45, 60, 90, 120).map { it to "${it}초" },
+                                    if (compact) 66.dp else 72.dp,
+                                    labelWidth = labelWidth, labelGap = labelGap,
+                                    labelFontSize = labelFontSize) {
+                                    updateAlarmConfig(alarmConfig.copy(fadeDurationSeconds = it))
+                                }
+                            }
+                            if (narrow) {
+                                Column {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        fadeToggle()
+                                        Spacer(Modifier.width(4.dp))
+                                        fadeStart()
+                                    }
+                                    Row(verticalAlignment = Alignment.CenterVertically) { fadeDuration() }
+                                }
+                            } else {
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    fadeToggle()
+                                    Spacer(Modifier.width(if (compact) 2.dp else 4.dp))
+                                    fadeStart()
+                                    Spacer(Modifier.width(if (compact) 2.dp else 4.dp))
+                                    fadeDuration()
+                                }
                             }
                         }
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
@@ -256,6 +310,30 @@ fun SettingsScreen(
                                 runCatching { context.startActivity(Intent(action)) }
                                     .onFailure { context.startActivity(Intent(Settings.ACTION_SOUND_SETTINGS)) }
                             }) { Text("기기 설정") }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Text("재생목록 표기방식", style = MaterialTheme.typography.titleMedium)
+                AppCard(Modifier.fillMaxWidth()) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = AppCardStyle.horizontalPadding,
+                        vertical = AppCardStyle.verticalPadding), verticalAlignment = Alignment.CenterVertically) {
+                        songDisplayConfig.fields.forEachIndexed { index, field ->
+                            if (index > 0) Text(" - ", fontSize = 12.sp)
+                            val options = SongDisplayField.entries.filter { candidate ->
+                                candidate == SongDisplayField.NONE || candidate == field ||
+                                    candidate !in songDisplayConfig.fields
+                            }.map { it to it.label }
+                            SettingsDropdownButton(field, options,
+                                Modifier.weight(1f).semantics {
+                                    contentDescription = "${index + 1}번째 표기 항목"
+                                }) { selected ->
+                                val next = songDisplayConfig.fields.toMutableList()
+                                next[index] = selected
+                                val config = SongDisplayConfig(next).normalized()
+                                songDisplayConfig = config
+                                SongDisplaySettings.save(context, config)
+                            }
                         }
                     }
                 }

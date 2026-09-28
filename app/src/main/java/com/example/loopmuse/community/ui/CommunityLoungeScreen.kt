@@ -19,8 +19,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.outlined.NoteAlt
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -44,6 +45,8 @@ import com.example.loopmuse.ui.AppCard
 import com.example.loopmuse.ui.AppCardStyle
 import com.example.loopmuse.ui.AppFolderTab
 import com.example.loopmuse.ui.SoftBlueFolderColor
+import com.example.loopmuse.ui.SoftGreenFolderColor
+import com.example.loopmuse.ui.DiscoveryRecommendationsPage
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -138,7 +141,7 @@ fun RecommendationComposer(
                 if ((requireSong && (!artistProvided || !titleProvided)) || artistProvided != titleProvided)
                     "곡을 추천하려면 가수명과 곡 제목을 모두 입력해 주세요."
                 else if (requireSong) "글 하단에 가수명과 곡 제목으로 YouTube 검색 링크가 표시됩니다."
-                else "두 칸을 비우면 글만, 모두 입력하면 YouTube 검색 링크가 함께 게시됩니다.",
+                else "가수·곡명을 입력하면 YouTube 링크가 붙습니다.",
                 style = MaterialTheme.typography.bodySmall,
                 color = if ((requireSong && (!artistProvided || !titleProvided)) || artistProvided != titleProvided)
                     MaterialTheme.colorScheme.error
@@ -241,15 +244,18 @@ fun CommunityLoungeScreen(
     var artist by rememberSaveable { mutableStateOf("") }
     var title by rememberSaveable { mutableStateOf("") }
     var showComposer by rememberSaveable { mutableStateOf(false) }
+    var showDiscovery by rememberSaveable { mutableStateOf(false) }
     var isSubmitting by remember { mutableStateOf(false) }
     var publishError by remember { mutableStateOf<String?>(null) }
     val draft = RecommendationDraft(message, artist, title)
     val postsFolderColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
     val writeFolderColor = SoftBlueFolderColor
+    val discoveryFolderColor = SoftGreenFolderColor
     val postsListState = rememberLazyListState()
+    val composerSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    BackHandler(enabled = showComposer) {
-        if (!isSubmitting) showComposer = false
+    BackHandler(enabled = showDiscovery && !showComposer) {
+        showDiscovery = false
     }
 
     if (errorMessage != null) {
@@ -266,9 +272,14 @@ fun CommunityLoungeScreen(
             TopAppBar(
                 title = { Text("LoopMuse Lounge", fontWeight = FontWeight.Bold) },
                 navigationIcon = {
-                    IconButton(onClick = { if (showComposer) {
-                        if (!isSubmitting) showComposer = false
-                    } else onBackPressed() }) {
+                    IconButton(onClick = {
+                        if (showComposer || showDiscovery) {
+                            if (!isSubmitting) {
+                                showComposer = false
+                                showDiscovery = false
+                            }
+                        } else onBackPressed()
+                    }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로")
                     }
                 }
@@ -283,66 +294,46 @@ fun CommunityLoungeScreen(
             ) {
                 AppFolderTab(
                     label = "게시글",
-                    icon = Icons.Default.List,
-                    selected = !showComposer,
+                    icon = null,
+                    selected = !showDiscovery,
                     folderColor = postsFolderColor,
                     enabled = !isSubmitting,
-                    onClick = { showComposer = false },
-                    modifier = Modifier.weight(1f)
+                    onClick = { showComposer = false; showDiscovery = false },
+                    modifier = Modifier.weight(1f),
+                    trailingContent = {
+                        IconButton(
+                            onClick = {
+                                publishError = null
+                                showDiscovery = false
+                                showComposer = true
+                            },
+                            enabled = !isSubmitting,
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Icon(Icons.Outlined.NoteAlt, contentDescription = "글 남기기",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(30.dp))
+                        }
+                    }
                 )
                 AppFolderTab(
-                    label = "글 남기기",
-                    icon = Icons.Default.Edit,
-                    selected = showComposer,
-                    folderColor = writeFolderColor,
+                    label = "앱 추천",
+                    icon = Icons.Default.MusicNote,
+                    selected = showDiscovery,
+                    folderColor = discoveryFolderColor,
                     enabled = !isSubmitting,
-                    onClick = { showComposer = true },
+                    onClick = { showComposer = false; showDiscovery = true },
                     modifier = Modifier.weight(1f)
                 )
             }
             Surface(
                 modifier = Modifier.fillMaxWidth().weight(1f),
                 shape = RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp),
-                color = if (showComposer) writeFolderColor else postsFolderColor,
+                color = if (showDiscovery) discoveryFolderColor else postsFolderColor,
                 tonalElevation = 2.dp
             ) {
-                if (showComposer) {
-                    Column(
-                        modifier = Modifier.fillMaxSize().imePadding()
-                            .verticalScroll(rememberScrollState()).padding(AppCardStyle.horizontalPadding),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        RecommendationComposer(
-                            draft = draft,
-                            onDraftChange = {
-                                message = it.message
-                                artist = it.artist
-                                title = it.title
-                                publishError = null
-                            },
-                            isSubmitting = isSubmitting,
-                            error = publishError,
-                            alwaysShowSongFields = true,
-                            forSongDialog = true,
-                            messagePlaceholder = "인사말이나 짧은 글을 남겨 주세요",
-                            onPublish = {
-                                scope.launch {
-                                    isSubmitting = true
-                                    publishError = null
-                                    val result = viewModel.addPost(draft.message, draft.title, draft.artist)
-                                    isSubmitting = false
-                                    if (result.isSuccess) {
-                                        message = ""
-                                        artist = ""
-                                        title = ""
-                                        showComposer = false
-                                    } else {
-                                        publishError = result.exceptionOrNull()?.message ?: "게시하지 못했습니다."
-                                    }
-                                }
-                            }
-                        )
-                    }
+                if (showDiscovery) {
+                    DiscoveryRecommendationsPage(modifier = Modifier.fillMaxSize())
                 } else {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
@@ -369,6 +360,69 @@ fun CommunityLoungeScreen(
                         }
                     }
                 }
+            }
+        }
+    }
+
+    if (showComposer) {
+        ModalBottomSheet(
+            onDismissRequest = { if (!isSubmitting) showComposer = false },
+            sheetState = composerSheetState,
+            shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+            containerColor = MaterialTheme.colorScheme.surface
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().imePadding()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = AppCardStyle.horizontalPadding, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("글 남기기", fontSize = 20.sp, fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(1f))
+                    IconButton(onClick = { if (!isSubmitting) showComposer = false }) {
+                        Icon(Icons.Default.Close, contentDescription = "글쓰기 닫기")
+                    }
+                }
+                AppCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = writeFolderColor),
+                    elevation = 6.dp
+                ) {
+                    RecommendationComposer(
+                        draft = draft,
+                        onDraftChange = {
+                            message = it.message
+                            artist = it.artist
+                            title = it.title
+                            publishError = null
+                        },
+                        isSubmitting = isSubmitting,
+                        error = publishError,
+                        alwaysShowSongFields = true,
+                        forSongDialog = true,
+                        messagePlaceholder = "인사말이나 짧은 글을 남겨 주세요",
+                        modifier = Modifier.padding(AppCardStyle.horizontalPadding, AppCardStyle.verticalPadding),
+                        onPublish = {
+                            scope.launch {
+                                isSubmitting = true
+                                publishError = null
+                                val result = viewModel.addPost(draft.message, draft.title, draft.artist)
+                                isSubmitting = false
+                                if (result.isSuccess) {
+                                    message = ""
+                                    artist = ""
+                                    title = ""
+                                    showComposer = false
+                                } else {
+                                    publishError = result.exceptionOrNull()?.message ?: "게시하지 못했습니다."
+                                }
+                            }
+                        }
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
             }
         }
     }
@@ -461,7 +515,7 @@ fun SongPostCard(
 
             if (post.message.isNotBlank()) {
                 Text(if (isExpanded) post.message else post.message.replace('\n', ' ').trim(),
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodySmall,
                     maxLines = if (isExpanded) Int.MAX_VALUE else 1,
                     overflow = if (isExpanded) TextOverflow.Clip else TextOverflow.Ellipsis,
                     modifier = Modifier.fillMaxWidth().clickable(

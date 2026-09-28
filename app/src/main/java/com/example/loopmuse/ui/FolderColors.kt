@@ -1,10 +1,12 @@
 package com.example.loopmuse.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -21,16 +23,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
 internal val SoftBlueFolderColor = Color(0xFFE6F1FB)
+internal val SoftGreenFolderColor = Color(0xFFE8F4EC)
 
 @Composable
 internal fun AppFolderTab(
     label: String,
-    icon: ImageVector,
+    icon: ImageVector?,
     selected: Boolean,
     folderColor: Color,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    trailingContent: @Composable (() -> Unit)? = null
 ) {
     Surface(
         onClick = onClick,
@@ -40,16 +44,25 @@ internal fun AppFolderTab(
         color = folderColor,
         tonalElevation = if (selected) 2.dp else 0.dp
     ) {
-        Row(
-            modifier = Modifier.fillMaxSize(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
-        ) {
-            val tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(4.dp))
-            Text(label, color = tint, style = MaterialTheme.typography.labelLarge,
-                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium)
+        Box(modifier = Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier.align(Alignment.Center),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                val tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                if (icon != null) {
+                    Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                }
+                Text(label, color = tint, style = MaterialTheme.typography.labelLarge,
+                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium)
+            }
+            if (trailingContent != null) {
+                Box(modifier = Modifier.align(Alignment.CenterEnd).padding(end = 6.dp)) {
+                    trailingContent()
+                }
+            }
         }
     }
 }

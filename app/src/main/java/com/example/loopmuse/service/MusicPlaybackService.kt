@@ -495,11 +495,14 @@ class MusicPlaybackService : Service() {
                     true
                 } else {
                     when (category) {
+                        "곡명" -> song.title.contains(query, ignoreCase = true)
                         "가수" -> song.artist.contains(query, ignoreCase = true)
+                        "장르" -> song.genre.contains(query, ignoreCase = true)
                         "앨범" -> song.album.contains(query, ignoreCase = true)
-                        "파일명" -> song.file.name.contains(query, ignoreCase = true) || song.title.contains(query, ignoreCase = true)
+                        "파일명" -> song.file.name.contains(query, ignoreCase = true)
                         else -> song.title.contains(query, ignoreCase = true) ||
                                 song.artist.contains(query, ignoreCase = true) ||
+                                song.genre.contains(query, ignoreCase = true) ||
                                 song.album.contains(query, ignoreCase = true) ||
                                 song.file.name.contains(query, ignoreCase = true)
                     }

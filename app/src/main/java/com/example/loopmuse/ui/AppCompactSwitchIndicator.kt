@@ -13,11 +13,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 @Composable
-internal fun AppCompactSwitchIndicator(checked: Boolean) {
-    Box(Modifier.width(38.dp).height(30.dp), contentAlignment = Alignment.Center) {
+internal fun AppCompactSwitchIndicator(checked: Boolean, width: Dp = 38.dp) {
+    Box(Modifier.width(width).height(30.dp), contentAlignment = Alignment.Center) {
         Box(Modifier.width(33.dp).height(19.dp).clip(RoundedCornerShape(10.dp))
             .background(if (checked) MaterialTheme.colorScheme.primary
                 else MaterialTheme.colorScheme.outline))

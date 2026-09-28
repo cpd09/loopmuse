@@ -15,6 +15,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.MarqueeSpacing
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.*
@@ -69,6 +70,8 @@ import com.example.loopmuse.community.ui.RecommendationComposer
 import com.example.loopmuse.community.ui.RecommendationDraft
 import com.example.loopmuse.community.viewmodel.CommunityViewModel
 import com.example.loopmuse.data.MusicFile
+import com.example.loopmuse.data.SongDisplayConfig
+import com.example.loopmuse.data.SongDisplaySettings
 import com.example.loopmuse.service.*
 import com.example.loopmuse.service.alarm.AlarmPlaybackService
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
@@ -145,6 +148,7 @@ fun HomeScreen() {
     var showLoungeAfterRecommendation by remember { mutableStateOf(false) }
     
     var showSettingsScreen by remember { mutableStateOf(false) }
+    var songDisplayConfig by remember(context) { mutableStateOf(SongDisplaySettings.read(context)) }
     
     var searchType by remember { mutableStateOf("전체") } 
     var editPlaylistName by remember { mutableStateOf("") }
@@ -208,7 +212,10 @@ fun HomeScreen() {
 
     if (showSettingsScreen) {
         SettingsScreen(
-            onBack = { showSettingsScreen = false },
+            onBack = {
+                songDisplayConfig = SongDisplaySettings.read(context)
+                showSettingsScreen = false
+            },
             onRestore = { uri, mode -> musicServiceConnection.restoreUserData(uri, mode) }
         )
     } else if (showLoungeScreen) {
@@ -241,7 +248,6 @@ fun HomeScreen() {
                                 ) {
                                     Text("Lounge", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                 }
-                                
                                 IconButton(
                                     onClick = { showAlarmDialog = true }, 
                                     modifier = Modifier.size(28.dp)
@@ -294,7 +300,7 @@ fun HomeScreen() {
                     }
                 } else {
                     Spacer(modifier = Modifier.height(12.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                         IconButton(onClick = { showLocalRefreshDialog = true }, modifier = Modifier.size(36.dp)) {
                             Icon(Icons.Default.Refresh, contentDescription = "리스트 초기화", tint = Color.Red, modifier = Modifier.size(24.dp))
                         }
@@ -335,10 +341,18 @@ fun HomeScreen() {
                         if (playlistState?.type == PlaylistType.TEMPORARY) {
                             Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                         }
+                        val totalSongs = allSongsInQueue.size
+                        val activeSongs = when {
+                            isSelectionMode || isSelectionPlayback -> allSongsInQueue.count { it.id in selectedIds }
+                            playlistState?.isLikedFilter == true -> allSongsInQueue.count { it.fingerprintId in likedFingerprints }
+                            else -> null
+                        }
+                        val playlistName = playlistState?.name ?: "전체곡"
                         Text(
-                            text = "${playlistState?.name ?: "전체곡"} (${allSongsInQueue.size}곡)", 
-                            fontSize = 16.sp, 
-                            fontWeight = FontWeight.ExtraBold, 
+                            text = if (activeSongs != null) "$playlistName($activeSongs/${totalSongs}곡)"
+                                else "$playlistName(${totalSongs}곡)",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
                             color = Color(0xFF1A237E), // Deep Indigo
                             modifier = Modifier
                                 .weight(1f)
@@ -387,6 +401,7 @@ fun HomeScreen() {
                             onEditSongClick = { song ->
                                 songForEdit = song
                             },
+                            displayConfig = songDisplayConfig,
                             isSelectionMode = isSelectionMode,
                             isSelectionPlayback = isSelectionPlayback
                         )
@@ -503,7 +518,7 @@ fun HomeScreen() {
                                     Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(16.dp))
                                 }
                                 DropdownMenu(expanded = categoryExpanded, onDismissRequest = { categoryExpanded = false }) {
-                                    listOf("전체", "파일명", "가수", "앨범").forEach { type ->
+                                    listOf("전체", "곡명", "가수", "장르", "앨범", "파일명").forEach { type ->
                                         DropdownMenuItem(text = { Text(type) }, onClick = { 
                                             searchType = type
                                             categoryExpanded = false 
@@ -930,7 +945,7 @@ fun HomeScreen() {
 fun OptionIconButton(icon: androidx.compose.ui.graphics.vector.ImageVector, isSelected: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .size(36.dp)
+            .size(32.dp)
             .clip(RoundedCornerShape(8.dp))
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center
@@ -960,7 +975,7 @@ fun OptionIconButton(icon: androidx.compose.ui.graphics.vector.ImageVector, isSe
 fun LikedFilterOptionButton(isLiked: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .size(36.dp)
+            .size(32.dp)
             .clip(RoundedCornerShape(8.dp))
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center
@@ -1251,7 +1266,21 @@ fun NowPlayingCardExpanded(
             .copy(alpha = 0.2f).compositeOver(MaterialTheme.colorScheme.surface))) {
         Column(modifier = Modifier.padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             val title = if (track != null) "${track.title} - ${track.artist}" else "재생 중인 곡 없음"
-            Text(text = title, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1, modifier = Modifier.basicMarquee())
+            Text(
+                text = title,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                softWrap = false,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().basicMarquee(
+                    iterations = Int.MAX_VALUE,
+                    initialDelayMillis = 600,
+                    repeatDelayMillis = 0,
+                    spacing = MarqueeSpacing(24.dp),
+                    velocity = 24.dp
+                )
+            )
             Spacer(modifier = Modifier.height(4.dp))
             Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
                 Slider(value = if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f, onValueChange = { connection.seekTo((it * duration).toLong()) }, modifier = Modifier.fillMaxWidth().height(24.dp), colors = if (isTasteMode) SliderDefaults.colors(activeTrackColor = Color.Magenta) else SliderDefaults.colors())
@@ -1271,11 +1300,7 @@ fun NowPlayingCardExpanded(
                 IconButton(onClick = { connection.toggleTasteMode() }, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.AvTimer, contentDescription = "맛보기 재생", tint = if (isTasteMode) Color.Magenta else MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp)) }
             }
             Spacer(modifier = Modifier.height(4.dp))
-            Surface(modifier = Modifier.fillMaxWidth().height(60.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), shape = RoundedCornerShape(8.dp)) {
-                Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(4.dp)) {
-                    Text(text = "가사 작업예정", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f), textAlign = TextAlign.Center, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                }
-            }
+            LyricsPanel(song = track, currentPosition = currentPosition)
         }
     }
 }
@@ -1285,6 +1310,7 @@ fun PlaylistView(
     songs: List<MusicFile>, currentTrack: MusicFile?, playlistState: PlaylistState?,
     playedSongIds: Set<String>, selectedIds: Set<String>, likedFingerprints: Set<String>,
     onSongClick: (MusicFile) -> Unit, onLikeClick: (String) -> Unit, onEditSongClick: (MusicFile) -> Unit,
+    displayConfig: SongDisplayConfig,
     isSelectionMode: Boolean,
     isSelectionPlayback: Boolean
 ) {
@@ -1372,8 +1398,9 @@ fun PlaylistView(
                         }
                         Spacer(modifier = Modifier.width(8.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(text = song.title, color = color.copy(alpha = alpha), fontSize = 14.sp, fontWeight = weight, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(text = song.artist, fontSize = 11.sp, color = color.copy(alpha = alpha * 0.7f), fontWeight = weight)
+                            Text(text = displayConfig.format(song), color = color.copy(alpha = alpha),
+                                fontSize = 14.sp, fontWeight = weight, maxLines = 1,
+                                overflow = TextOverflow.Ellipsis)
                         }
                         if (!isSelectionMode) {
                             IconButton(onClick = { onEditSongClick(song) }, modifier = Modifier.size(24.dp)) {

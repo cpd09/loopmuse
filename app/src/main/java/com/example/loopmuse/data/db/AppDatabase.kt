@@ -7,10 +7,12 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [SongMetaEntity::class, AlarmEntity::class], version = 7, exportSchema = false)
+@Database(entities = [SongMetaEntity::class, AlarmEntity::class, LyricsEntity::class, DiscoveryReactionEntity::class], version = 11, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun songMetaDao(): SongMetaDao
     abstract fun alarmDao(): AlarmDao
+    abstract fun lyricsDao(): LyricsDao
+    abstract fun discoveryReactionDao(): DiscoveryReactionDao
 
     companion object {
         // The shipped versions 1 and 2 contained song_metadata only. Version 4 added
@@ -52,6 +54,34 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `lyrics` (`fingerprintId` TEXT NOT NULL, `title` TEXT NOT NULL, `artist` TEXT NOT NULL, `plainLyrics` TEXT NOT NULL, `syncedLyrics` TEXT NOT NULL, `source` TEXT NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`fingerprintId`))")
+            }
+        }
+
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `discovery_reactions` (`songKey` TEXT NOT NULL, `artist` TEXT NOT NULL, `title` TEXT NOT NULL, `isLiked` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`songKey`))")
+            }
+        }
+
+        private val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `discovery_reactions` ADD COLUMN `isRead` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `discovery_reactions` ADD COLUMN `recommendedAt` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `discovery_reactions` ADD COLUMN `batchId` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `discovery_reactions` ADD COLUMN `listenCount` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("UPDATE `discovery_reactions` SET `isRead` = 1")
+            }
+        }
+
+        private val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `discovery_reactions` ADD COLUMN `isHidden` INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
@@ -62,7 +92,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "loopmuse_database"
                 )
-                .addMigrations(migrationFrom(1), migrationFrom(2), migrationFrom(3), MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+                .addMigrations(migrationFrom(1), migrationFrom(2), migrationFrom(3), MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
                 .build()
                 INSTANCE = instance
                 instance

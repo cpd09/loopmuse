@@ -11,9 +11,14 @@ import com.example.loopmuse.data.SelectionItem
 import com.example.loopmuse.data.db.AlarmEntity
 import com.example.loopmuse.data.db.AppDatabase
 import com.example.loopmuse.data.db.SongMetaEntity
+import com.example.loopmuse.data.db.LyricsEntity
+import com.example.loopmuse.data.db.DiscoveryReactionEntity
 import com.example.loopmuse.service.alarm.AlarmScheduler
 import com.example.loopmuse.service.alarm.AlarmGlobalConfig
 import com.example.loopmuse.service.alarm.AlarmGlobalSettings
+import com.example.loopmuse.data.SongDisplayMode
+import com.example.loopmuse.data.SongDisplayConfig
+import com.example.loopmuse.data.SongDisplaySettings
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonElement
@@ -90,7 +95,11 @@ class BackupManager(private val context: Context, private val database: AppDatab
         val currentPlaylistId: String,
         val playedSongIds: List<String>,
         val lastPlayed: Map<String, Long>,
-        val alarmGlobalConfig: AlarmGlobalConfig? = null
+        val alarmGlobalConfig: AlarmGlobalConfig? = null,
+        val songDisplayMode: SongDisplayMode? = null,
+        val songDisplayConfig: SongDisplayConfig? = null,
+        val lyrics: List<LyricsEntity> = emptyList(),
+        val discoveryReactions: List<DiscoveryReactionEntity> = emptyList()
     )
 
     private data class Envelope(val format: String, val version: Int, val createdAt: Long, val payload: String, val sha256: String)
@@ -137,11 +146,13 @@ class BackupManager(private val context: Context, private val database: AppDatab
     }
 
     private fun hasMeaningfulUserData(data: Payload): Boolean =
-        data.songs.isNotEmpty() || data.alarms.isNotEmpty() || data.selectedItems.isNotEmpty() ||
+        data.songs.isNotEmpty() || data.alarms.isNotEmpty() || data.lyrics.isNotEmpty() ||
+            data.discoveryReactions.isNotEmpty() || data.selectedItems.isNotEmpty() ||
             data.playedSongIds.isNotEmpty() || data.lastPlayed.isNotEmpty() ||
             data.currentPlaylistId != "ALL" ||
             playlistObject(data.playlistsJson).entrySet().any { it.key != "ALL" } ||
-            data.alarmGlobalConfig != AlarmGlobalConfig()
+            data.alarmGlobalConfig != AlarmGlobalConfig() ||
+            (data.songDisplayConfig != null && data.songDisplayConfig != SongDisplayConfig())
 
     private fun storedFolderUri(): Uri? {
         val uri = prefs.getString("folder_uri", null)?.let(Uri::parse) ?: return null
@@ -567,7 +578,12 @@ class BackupManager(private val context: Context, private val database: AppDatab
             val previous = capture()
             saveSafetyCopy("loopmuse-before-reset")
             try {
-                database.withTransaction { database.songMetaDao().deleteAll(); database.alarmDao().deleteAll() }
+                database.withTransaction {
+                    database.songMetaDao().deleteAll()
+                    database.alarmDao().deleteAll()
+                    database.lyricsDao().deleteAll()
+                    database.discoveryReactionDao().deleteAll()
+                }
                 check(context.getSharedPreferences("music_prefs", Context.MODE_PRIVATE).edit().clear().commit())
                 check(context.getSharedPreferences("playback_queue_v5", Context.MODE_PRIVATE).edit().clear().commit())
                 check(context.getSharedPreferences("playback_history", Context.MODE_PRIVATE).edit().clear().commit())
@@ -610,7 +626,9 @@ class BackupManager(private val context: Context, private val database: AppDatab
             selected, queuePrefs.getString("playlists", "{}") ?: "{}",
             queuePrefs.getString("current_id", "ALL") ?: "ALL",
             historyPrefs.getStringSet("played_songs", emptySet())?.toList() ?: emptyList(), lastPlayed,
-            AlarmGlobalSettings.read(context))
+            AlarmGlobalSettings.read(context), null, SongDisplaySettings.read(context),
+            database.lyricsDao().getAll().first(),
+            database.discoveryReactionDao().getAll().first())
     }
 
     private fun decode(json: String): Decoded {
@@ -649,7 +667,19 @@ class BackupManager(private val context: Context, private val database: AppDatab
                     config.snoozeMinutes.coerceIn(1, 30) else 5
             )
         }
-        val payload = rawPayload.copy(alarmGlobalConfig = globalConfig, alarms = rawPayload.alarms.map { alarm ->
+        val displayConfig = runCatching { rawPayload.songDisplayConfig?.normalized() }.getOrNull()
+            ?: rawPayload.songDisplayMode?.toConfig() ?: SongDisplayConfig()
+        val lyrics = fields.get("lyrics")?.takeIf { it.isJsonArray }?.let {
+            gson.fromJson<List<LyricsEntity>>(it, object : TypeToken<List<LyricsEntity>>() {}.type)
+        } ?: emptyList()
+        val discoveryReactions = fields.get("discoveryReactions")?.takeIf { it.isJsonArray }?.let {
+            gson.fromJson<List<DiscoveryReactionEntity>>(it,
+                object : TypeToken<List<DiscoveryReactionEntity>>() {}.type)
+        } ?: emptyList()
+        val payload = rawPayload.copy(alarmGlobalConfig = globalConfig,
+            songDisplayMode = null, songDisplayConfig = displayConfig, lyrics = lyrics,
+            discoveryReactions = discoveryReactions,
+            alarms = rawPayload.alarms.map { alarm ->
             alarm.copy(
                 label = alarm.label.orEmpty(),
                 soundMode = alarm.soundMode?.takeIf {
@@ -658,6 +688,15 @@ class BackupManager(private val context: Context, private val database: AppDatab
             )
         })
         validateSongs(payload.songs)
+        require(payload.lyrics.all { it.fingerprintId.isNotBlank() && it.plainLyrics.length <= 100_000 &&
+            it.syncedLyrics.length <= 100_000 && it.title.length <= 500 && it.artist.length <= 500 } &&
+            payload.lyrics.map { it.fingerprintId }.toSet().size == payload.lyrics.size) { "가사 정보가 잘못되었습니다." }
+        require(payload.discoveryReactions.all { it.songKey.isNotBlank() && it.artist.isNotBlank() &&
+            it.title.isNotBlank() && it.artist.length <= 500 && it.title.length <= 500 &&
+            it.updatedAt > 0L && it.recommendedAt >= 0L && it.batchId >= 0L && it.listenCount >= 0L } &&
+            payload.discoveryReactions.map { it.songKey }.toSet().size == payload.discoveryReactions.size) {
+            "추천곡 정보가 잘못되었습니다."
+        }
         require(payload.alarms.all { it.hour in 0..23 && it.minute in 0..59 && it.id > 0 &&
             it.targetVolume in 0f..1f && it.startPositionMs >= 0L &&
             (it.endPositionMs == 0L || it.endPositionMs > it.startPositionMs) } &&
@@ -689,9 +728,12 @@ class BackupManager(private val context: Context, private val database: AppDatab
 
     private suspend fun replace(data: Payload) {
         database.withTransaction {
-            database.songMetaDao().deleteAll(); database.alarmDao().deleteAll()
+            database.songMetaDao().deleteAll(); database.alarmDao().deleteAll(); database.lyricsDao().deleteAll()
+            database.discoveryReactionDao().deleteAll()
             data.songs.forEach { database.songMetaDao().insertOrUpdate(it) }
             data.alarms.forEach { database.alarmDao().insertAlarm(it) }
+            data.lyrics.forEach { database.lyricsDao().insertOrUpdate(it) }
+            data.discoveryReactions.forEach { database.discoveryReactionDao().insertOrUpdate(it) }
         }
         check(context.getSharedPreferences("music_prefs", Context.MODE_PRIVATE).edit()
             .putString("selected_items", gson.toJson(data.selectedItems)).commit()) { "음악 폴더 정보를 저장하지 못했습니다." }
@@ -699,6 +741,7 @@ class BackupManager(private val context: Context, private val database: AppDatab
             .putString("playlists", data.playlistsJson).putString("current_id", data.currentPlaylistId).commit()) { "재생목록을 저장하지 못했습니다." }
         writeHistory(data.playedSongIds.toSet(), data.lastPlayed)
         data.alarmGlobalConfig?.let { AlarmGlobalSettings.save(context, it) }
+        data.songDisplayConfig?.let { SongDisplaySettings.save(context, it) }
     }
 
     private suspend fun merge(data: Payload, legacy: Boolean) {
@@ -706,6 +749,16 @@ class BackupManager(private val context: Context, private val database: AppDatab
             data.songs.forEach { incoming ->
                 val current = database.songMetaDao().getMetadataById(incoming.fingerprintId)
                 if (current == null || incoming.lastUpdated > current.lastUpdated) database.songMetaDao().insertOrUpdate(incoming)
+            }
+            data.lyrics.forEach { incoming ->
+                val current = database.lyricsDao().getById(incoming.fingerprintId)
+                if (current == null || incoming.updatedAt > current.updatedAt) database.lyricsDao().insertOrUpdate(incoming)
+            }
+            data.discoveryReactions.forEach { incoming ->
+                val current = database.discoveryReactionDao().getByKey(incoming.songKey)
+                if (current == null || incoming.updatedAt > current.updatedAt) {
+                    database.discoveryReactionDao().insertOrUpdate(incoming)
+                }
             }
             if (!legacy) {
                 val currentAlarms = database.alarmDao().getAllAlarmsOnce()
@@ -820,6 +873,8 @@ class BackupManager(private val context: Context, private val database: AppDatab
         watcherJobs = listOf(
             scope.launch { database.songMetaDao().getAllMetadata().collect { signal.trySend(Unit) } },
             scope.launch { database.alarmDao().getAllAlarms().collect { signal.trySend(Unit) } },
+            scope.launch { database.lyricsDao().getAll().collect { signal.trySend(Unit) } },
+            scope.launch { database.discoveryReactionDao().getAll().collect { signal.trySend(Unit) } },
             scope.launch(Dispatchers.IO) {
                 signal.trySend(Unit)
                 for (ignored in signal) {
