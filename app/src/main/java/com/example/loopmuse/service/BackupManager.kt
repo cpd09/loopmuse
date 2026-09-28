@@ -12,6 +12,8 @@ import com.example.loopmuse.data.db.AlarmEntity
 import com.example.loopmuse.data.db.AppDatabase
 import com.example.loopmuse.data.db.SongMetaEntity
 import com.example.loopmuse.service.alarm.AlarmScheduler
+import com.example.loopmuse.service.alarm.AlarmGlobalConfig
+import com.example.loopmuse.service.alarm.AlarmGlobalSettings
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonElement
@@ -85,7 +87,8 @@ class BackupManager(private val context: Context, private val database: AppDatab
         val playlistsJson: String,
         val currentPlaylistId: String,
         val playedSongIds: List<String>,
-        val lastPlayed: Map<String, Long>
+        val lastPlayed: Map<String, Long>,
+        val alarmGlobalConfig: AlarmGlobalConfig? = null
     )
 
     private data class Envelope(val format: String, val version: Int, val createdAt: Long, val payload: String, val sha256: String)
@@ -525,6 +528,7 @@ class BackupManager(private val context: Context, private val database: AppDatab
                 check(context.getSharedPreferences("music_prefs", Context.MODE_PRIVATE).edit().clear().commit())
                 check(context.getSharedPreferences("playback_queue_v5", Context.MODE_PRIVATE).edit().clear().commit())
                 check(context.getSharedPreferences("playback_history", Context.MODE_PRIVATE).edit().clear().commit())
+                check(context.getSharedPreferences(AlarmGlobalSettings.PREFS, Context.MODE_PRIVATE).edit().clear().commit())
                 rescheduleAlarms(previous.alarms)
                 prefs.edit().remove("last_digest").commit()
             } catch (failure: Exception) {
@@ -562,7 +566,8 @@ class BackupManager(private val context: Context, private val database: AppDatab
         return Payload(database.songMetaDao().getAllMetadata().first(), database.alarmDao().getAllAlarms().first(),
             selected, queuePrefs.getString("playlists", "{}") ?: "{}",
             queuePrefs.getString("current_id", "ALL") ?: "ALL",
-            historyPrefs.getStringSet("played_songs", emptySet())?.toList() ?: emptyList(), lastPlayed)
+            historyPrefs.getStringSet("played_songs", emptySet())?.toList() ?: emptyList(), lastPlayed,
+            AlarmGlobalSettings.read(context))
     }
 
     private fun decode(json: String): Decoded {
@@ -591,7 +596,15 @@ class BackupManager(private val context: Context, private val database: AppDatab
             fields.get("lastPlayed")?.isJsonObject == true && fields.getAsJsonArray("songs").all(::validSongJson)) {
             "백업 내용이 완전하지 않습니다."
         }
-        val payload = gson.fromJson(envelope.payload, Payload::class.java)
+        val rawPayload = gson.fromJson(envelope.payload, Payload::class.java)
+        val payload = rawPayload.copy(alarms = rawPayload.alarms.map { alarm ->
+            alarm.copy(
+                label = alarm.label.orEmpty(),
+                soundMode = alarm.soundMode?.takeIf {
+                    it in setOf("LEGACY", "SOUND", "VIBRATE", "LIGHT", "PHONE")
+                } ?: "LEGACY"
+            )
+        })
         validateSongs(payload.songs)
         require(payload.alarms.all { it.hour in 0..23 && it.minute in 0..59 && it.id > 0 &&
             it.targetVolume in 0f..1f && it.startPositionMs >= 0L &&
@@ -633,6 +646,7 @@ class BackupManager(private val context: Context, private val database: AppDatab
         check(context.getSharedPreferences("playback_queue_v5", Context.MODE_PRIVATE).edit()
             .putString("playlists", data.playlistsJson).putString("current_id", data.currentPlaylistId).commit()) { "재생목록을 저장하지 못했습니다." }
         writeHistory(data.playedSongIds.toSet(), data.lastPlayed)
+        data.alarmGlobalConfig?.let { AlarmGlobalSettings.save(context, it) }
     }
 
     private suspend fun merge(data: Payload, legacy: Boolean) {
@@ -740,7 +754,7 @@ class BackupManager(private val context: Context, private val database: AppDatab
     fun startAutoBackup(scope: CoroutineScope) {
         if (watcherJobs.isNotEmpty()) return
         val signal = Channel<Unit>(Channel.CONFLATED)
-        listeners = listOf("music_prefs", "playback_queue_v5", "playback_history").map { name ->
+        listeners = listOf("music_prefs", "playback_queue_v5", "playback_history", AlarmGlobalSettings.PREFS).map { name ->
             val source = context.getSharedPreferences(name, Context.MODE_PRIVATE)
             val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ -> signal.trySend(Unit) }
             source.registerOnSharedPreferenceChangeListener(listener)

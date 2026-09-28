@@ -301,7 +301,7 @@ fun HomeScreen() {
                         }
                         
                         IconButton(onClick = { showSettingsScreen = true }, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Default.Settings, contentDescription = "설정",
+                            Icon(Icons.Default.Settings, contentDescription = "전체설정",
                                 tint = if (backupProblem != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier.size(20.dp))
                         }

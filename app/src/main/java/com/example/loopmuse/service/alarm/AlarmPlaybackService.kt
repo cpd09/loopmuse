@@ -11,6 +11,8 @@ import android.content.Intent
 import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.MediaPlayer
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
 import android.os.Build
 import android.os.IBinder
 import android.os.VibrationEffect
@@ -20,10 +22,12 @@ import android.util.Log
 import com.example.loopmuse.MainActivity
 import com.example.loopmuse.ui.AlarmRingingActivity
 import java.util.Locale
-import kotlin.time.Duration.Companion.seconds
+import kotlin.coroutines.coroutineContext
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -34,6 +38,8 @@ class AlarmPlaybackService : Service() {
     private var alarmVibrator: Vibrator? = null
     private var segmentJob: Job? = null
     private var fadeJob: Job? = null
+    private var lightJob: Job? = null
+    private var lightCameraId: String? = null
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
     private lateinit var audioManager: AudioManager
     private var originalVolume: Int = 0
@@ -43,6 +49,7 @@ class AlarmPlaybackService : Service() {
 
     companion object {
         const val ALARM_CHANNEL_ID = "alarm_channel"
+        const val SILENT_ALARM_CHANNEL_ID = "alarm_silent_channel"
         const val NOTIFICATION_ID = 1002
         const val ACTION_STOP_ALARM = "ACTION_STOP_ALARM"
         const val ACTION_DISMISS_SNOOZE = "ACTION_DISMISS_SNOOZE"
@@ -70,6 +77,17 @@ class AlarmPlaybackService : Service() {
                     NotificationManager.IMPORTANCE_HIGH
                 ).apply { lockscreenVisibility = Notification.VISIBILITY_PUBLIC }
                 context.getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
+                val silentChannel = NotificationChannel(
+                    SILENT_ALARM_CHANNEL_ID,
+                    "Silent alarms",
+                    NotificationManager.IMPORTANCE_HIGH
+                ).apply {
+                    lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+                    setSound(null, null)
+                    enableVibration(false)
+                }
+                context.getSystemService(NotificationManager::class.java)
+                    ?.createNotificationChannel(silentChannel)
             }
         }
 
@@ -148,15 +166,15 @@ class AlarmPlaybackService : Service() {
         val songPath = intent.getStringExtra("SONG_PATH")
         val startPositionMs = intent.getLongExtra("START_POSITION", 0L)
         val endPositionMs = intent.getLongExtra("END_POSITION", 0L)
-        val targetVolume = intent.getFloatExtra("TARGET_VOLUME", 0.5f)
-        val useFadeIn = intent.getBooleanExtra("USE_FADE_IN", true)
         val respectPhoneSoundMode = intent.getBooleanExtra("RESPECT_PHONE_SOUND_MODE", false)
+        val soundMode = intent.getStringExtra("SOUND_MODE") ?: "LEGACY"
 
         val notification = createNotification(
             alarmId,
             intent.getIntExtra("ALARM_HOUR", 0),
             intent.getIntExtra("ALARM_MINUTE", 0),
-            intent.getStringExtra("SONG_TITLE")
+            intent.getStringExtra("SONG_TITLE"),
+            if (soundMode == "LEGACY" && respectPhoneSoundMode) "PHONE" else soundMode
         )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
@@ -179,20 +197,24 @@ class AlarmPlaybackService : Service() {
         }
 
         serviceScope.launch {
-            playAlarm(songPath, startPositionMs, endPositionMs, targetVolume, useFadeIn,
-                respectPhoneSoundMode)
+            playAlarm(songPath, startPositionMs, endPositionMs, respectPhoneSoundMode, soundMode)
         }
 
         return START_NOT_STICKY
     }
 
     private fun playAlarm(songPath: String?, startPositionMs: Long, endPositionMs: Long,
-                          targetVolume: Float, useFadeIn: Boolean, respectPhoneSoundMode: Boolean) {
-        if (respectPhoneSoundMode) {
+                          respectPhoneSoundMode: Boolean, soundMode: String) {
+        val global = AlarmGlobalSettings.read(this)
+        when (soundMode) {
+            "LIGHT" -> { startLightBlinking(global.blinkIntervalSeconds); return }
+            "VIBRATE" -> { startAlarmVibration(global.vibrationPercent); return }
+        }
+        if (soundMode == "PHONE" || (soundMode == "LEGACY" && respectPhoneSoundMode)) {
             when (audioManager.ringerMode) {
                 AudioManager.RINGER_MODE_SILENT -> return
                 AudioManager.RINGER_MODE_VIBRATE -> {
-                    startAlarmVibration()
+                    startAlarmVibration(global.vibrationPercent)
                     return
                 }
             }
@@ -201,10 +223,12 @@ class AlarmPlaybackService : Service() {
         originalVolume = audioManager.getStreamVolume(AudioManager.STREAM_ALARM)
         volumeWasChanged = true
         val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
-        val finalVolumeIdx = (maxVol * targetVolume).toInt().coerceAtLeast(1)
+        val finalVolumeIdx = (maxVol * global.volumePercent / 100f).roundToInt().coerceAtLeast(1)
+        val firstVolumeIdx = (maxVol * global.fadeStartPercent / 100f)
+            .roundToInt().coerceIn(1, finalVolumeIdx)
         
-        if (useFadeIn) {
-            audioManager.setStreamVolume(AudioManager.STREAM_ALARM, 1, 0)
+        if (global.fadeEnabled) {
+            audioManager.setStreamVolume(AudioManager.STREAM_ALARM, firstVolumeIdx, 0)
         } else {
             audioManager.setStreamVolume(AudioManager.STREAM_ALARM, finalVolumeIdx, 0)
         }
@@ -299,17 +323,30 @@ class AlarmPlaybackService : Service() {
         }
 
         // Fade-in effect
-        if (useFadeIn && isPrepared) {
+        if (global.fadeEnabled && isPrepared) {
             fadeJob = serviceScope.launch {
-                for (v in 1..finalVolumeIdx) {
-                    audioManager.setStreamVolume(AudioManager.STREAM_ALARM, v, 0)
-                    delay(3.seconds) // Increase every 3 seconds for a gentle wake up
+                val durationMs = global.fadeDurationSeconds * 1000L
+                val startedAt = android.os.SystemClock.elapsedRealtime()
+                while (true) {
+                    val progress = ((android.os.SystemClock.elapsedRealtime() - startedAt).toFloat() / durationMs)
+                        .coerceIn(0f, 1f)
+                    val level = (firstVolumeIdx + (finalVolumeIdx - firstVolumeIdx) * progress)
+                        .roundToInt().coerceIn(firstVolumeIdx, finalVolumeIdx)
+                    audioManager.setStreamVolume(AudioManager.STREAM_ALARM, level, 0)
+                    if (progress >= 1f) break
+                    delay(250L)
                 }
             }
         }
     }
 
     private fun releasePlayback() {
+        lightJob?.cancel()
+        lightJob = null
+        lightCameraId?.let { id ->
+            runCatching { (getSystemService(CAMERA_SERVICE) as CameraManager).setTorchMode(id, false) }
+        }
+        lightCameraId = null
         alarmVibrator?.cancel()
         alarmVibrator = null
         segmentJob?.cancel()
@@ -328,7 +365,7 @@ class AlarmPlaybackService : Service() {
         }
     }
 
-    private fun startAlarmVibration() {
+    private fun startAlarmVibration(percent: Int) {
         @Suppress("DEPRECATION")
         val vibrator = getSystemService(VIBRATOR_SERVICE) as? Vibrator ?: return
         if (!vibrator.hasVibrator()) return
@@ -337,10 +374,58 @@ class AlarmPlaybackService : Service() {
         val attributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             @Suppress("DEPRECATION")
-            vibrator.vibrate(VibrationEffect.createWaveform(pattern, 0), attributes)
+            vibrator.vibrate(
+                if (vibrator.hasAmplitudeControl()) {
+                    val amplitude = (percent.coerceIn(10, 100) * 255 / 100f).roundToInt()
+                    VibrationEffect.createWaveform(pattern, intArrayOf(0, amplitude, 0), 0)
+                } else VibrationEffect.createWaveform(pattern, 0),
+                attributes
+            )
         } else {
             @Suppress("DEPRECATION")
             vibrator.vibrate(pattern, 0, attributes)
+        }
+    }
+
+    private fun startLightBlinking(intervalSeconds: Int) {
+        val manager = getSystemService(CAMERA_SERVICE) as CameraManager
+        val cameraId = runCatching {
+            val flashCameras = manager.cameraIdList.filter { id ->
+                manager.getCameraCharacteristics(id).get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+            }
+            flashCameras.firstOrNull { id ->
+                manager.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING) ==
+                    CameraCharacteristics.LENS_FACING_BACK
+            } ?: flashCameras.firstOrNull()
+        }.getOrNull() ?: return
+        lightCameraId = cameraId
+        lightJob = serviceScope.launch {
+            val thisJob = coroutineContext[Job]
+            try {
+                while (true) {
+                    var lit = false
+                    try {
+                        manager.setTorchMode(cameraId, true)
+                        lit = true
+                        delay(200L)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.w("LoopMuse", "Alarm light temporarily unavailable", e)
+                    } finally {
+                        if (lit) runCatching { manager.setTorchMode(cameraId, false) }
+                    }
+                    delay(intervalSeconds.coerceIn(1, 5) * 1000L - 200L)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } finally {
+                if (lightJob === thisJob) {
+                    lightJob = null
+                    lightCameraId = null
+                    runCatching { manager.setTorchMode(cameraId, false) }
+                }
+            }
         }
     }
 
@@ -377,7 +462,8 @@ class AlarmPlaybackService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    private fun createNotification(alarmId: Int, hour: Int, minute: Int, songTitle: String?): Notification {
+    private fun createNotification(alarmId: Int, hour: Int, minute: Int, songTitle: String?,
+                                   soundMode: String): Notification {
         val stopIntent = Intent(this, AlarmPlaybackService::class.java).apply {
             action = ACTION_STOP_ALARM
             putExtra("ALARM_ID", alarmId)
@@ -406,7 +492,9 @@ class AlarmPlaybackService : Service() {
 
         val timeText = String.format(Locale.KOREA, "%02d:%02d", hour, minute)
 
-        return NotificationCompat.Builder(this, ALARM_CHANNEL_ID)
+        val channelId = if (soundMode == "SOUND" || soundMode == "LEGACY") ALARM_CHANNEL_ID
+            else SILENT_ALARM_CHANNEL_ID
+        return NotificationCompat.Builder(this, channelId)
             .setContentTitle("LoopMuse 알람")
             .setContentText("$timeText · ${songTitle ?: "알람음"}")
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)

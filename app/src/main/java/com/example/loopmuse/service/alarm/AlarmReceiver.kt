@@ -47,6 +47,7 @@ class AlarmReceiver : BroadcastReceiver() {
                     putExtra("TARGET_VOLUME", alarm.targetVolume)
                     putExtra("USE_FADE_IN", alarm.useFadeIn)
                     putExtra("RESPECT_PHONE_SOUND_MODE", alarm.respectPhoneSoundMode)
+                    putExtra("SOUND_MODE", alarm.soundMode)
                 }
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                     context.startForegroundService(serviceIntent)
