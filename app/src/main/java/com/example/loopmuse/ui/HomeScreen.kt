@@ -60,6 +60,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -237,7 +238,8 @@ fun HomeScreen() {
             modifier = Modifier.fillMaxSize().safeDrawingPadding(),
             topBar = {
                 Surface(tonalElevation = 4.dp) {
-                    Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                    Column(modifier = Modifier.fillMaxWidth()
+                        .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("🎵 LoopMuse", fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -269,7 +271,7 @@ fun HomeScreen() {
                                 }
                             }
                         }
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             IconButton(onClick = { showGlobalRefreshDialog = true }, modifier = Modifier.size(48.dp)) {
                                 Box(contentAlignment = Alignment.Center) {
@@ -299,8 +301,16 @@ fun HomeScreen() {
                         AppButton(onClick = { storagePermissionState.launchPermissionRequest() }) { Text("저장소 권한 허용") }
                     }
                 } else {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    AppCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer
+                            .copy(alpha = 0.2f).compositeOver(MaterialTheme.colorScheme.surface))
+                    ) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                         IconButton(onClick = { showLocalRefreshDialog = true }, modifier = Modifier.size(36.dp)) {
                             Icon(Icons.Default.Refresh, contentDescription = "리스트 초기화", tint = Color.Red, modifier = Modifier.size(24.dp))
                         }
@@ -336,8 +346,9 @@ fun HomeScreen() {
                                 modifier = Modifier.size(20.dp))
                         }
                     }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                         if (playlistState?.type == PlaylistType.TEMPORARY) {
                             Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                         }
@@ -382,6 +393,8 @@ fun HomeScreen() {
                         IconButton(onClick = { showSearchDialog = true }, modifier = Modifier.size(32.dp)) {
                             Icon(Icons.AutoMirrored.Filled.ManageSearch, contentDescription = "통합 검색", modifier = Modifier.size(28.dp))
                         }
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
                     }
                     Box(modifier = Modifier.weight(1f)) {
                         PlaylistView(
@@ -1250,7 +1263,7 @@ fun SongEditDialog(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun NowPlayingCardExpanded(
     track: MusicFile?, isPlaying: Boolean, currentPosition: Long, duration: Long, 
@@ -1260,6 +1273,14 @@ fun NowPlayingCardExpanded(
     val audioManager = remember { context.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager }
     var currentVolume by remember { mutableFloatStateOf(audioManager.getStreamVolume(android.media.AudioManager.STREAM_MUSIC).toFloat()) }
     val maxVolume = remember { audioManager.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC).toFloat() }
+    val seekInteractionSource = remember { MutableInteractionSource() }
+    val volumeInteractionSource = remember { MutableInteractionSource() }
+    val seekColors = if (isTasteMode) SliderDefaults.colors(activeTrackColor = Color.Magenta) else SliderDefaults.colors()
+    val volumeColors = SliderDefaults.colors(
+        thumbColor = MaterialTheme.colorScheme.primary,
+        activeTrackColor = MaterialTheme.colorScheme.primary,
+        inactiveTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+    )
 
     AppCard(modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer
@@ -1281,27 +1302,75 @@ fun NowPlayingCardExpanded(
                     velocity = 24.dp
                 )
             )
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(2.dp))
             Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
-                Box(modifier = Modifier.fillMaxWidth().height(30.dp)) {
-                    Slider(value = if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f, onValueChange = { connection.seekTo((it * duration).toLong()) }, modifier = Modifier.fillMaxWidth().height(22.dp).align(Alignment.TopCenter), colors = if (isTasteMode) SliderDefaults.colors(activeTrackColor = Color.Magenta) else SliderDefaults.colors())
+                Box(modifier = Modifier.fillMaxWidth().height(28.dp)) {
+                    Slider(
+                        value = if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f,
+                        onValueChange = { connection.seekTo((it * duration).toLong()) },
+                        modifier = Modifier.fillMaxWidth().height(18.dp).align(Alignment.TopCenter),
+                        colors = seekColors,
+                        interactionSource = seekInteractionSource,
+                        thumb = { SliderDefaults.Thumb(seekInteractionSource, colors = seekColors,
+                            thumbSize = DpSize(4.dp, 22.dp)) },
+                        track = { sliderState -> SliderDefaults.Track(sliderState,
+                            modifier = Modifier.height(8.dp), colors = seekColors) }
+                    )
                     Row(modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text(formatTime(currentPosition), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(formatTime(duration), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(4.dp))
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Icon(Icons.AutoMirrored.Filled.VolumeDown, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
-                Slider(value = currentVolume, onValueChange = { currentVolume = it; audioManager.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, it.roundToInt(), 0) }, valueRange = 0f..maxVolume, modifier = Modifier.weight(0.7f).height(32.dp), colors = SliderDefaults.colors(thumbColor = MaterialTheme.colorScheme.primary, activeTrackColor = MaterialTheme.colorScheme.primary, inactiveTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)))
-                Spacer(modifier = Modifier.width(4.dp))
-                IconButton(onClick = { connection.playPrevious() }) { Icon(Icons.Default.SkipPrevious, contentDescription = "이전곡", modifier = Modifier.size(30.dp)) }
-                FilledTonalIconButton(onClick = { scope.launch { connection.togglePlayPause() } }, modifier = Modifier.size(52.dp)) { Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = "재생", modifier = Modifier.size(32.dp)) }
-                IconButton(onClick = { connection.playNext() }) { Icon(Icons.Default.SkipNext, contentDescription = "다음곡", modifier = Modifier.size(30.dp)) }
-                IconButton(onClick = { connection.toggleTasteMode() }, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.AvTimer, contentDescription = "맛보기 재생", tint = if (isTasteMode) Color.Magenta else MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp)) }
+            Spacer(modifier = Modifier.height(2.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.weight(35f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.VolumeDown, contentDescription = null,
+                        modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+                    Slider(
+                        value = currentVolume,
+                        onValueChange = { currentVolume = it; audioManager.setStreamVolume(
+                            android.media.AudioManager.STREAM_MUSIC, it.roundToInt(), 0) },
+                        valueRange = 0f..maxVolume,
+                        modifier = Modifier.weight(1f).height(24.dp),
+                        colors = volumeColors,
+                        interactionSource = volumeInteractionSource,
+                        thumb = { SliderDefaults.Thumb(volumeInteractionSource, colors = volumeColors,
+                            thumbSize = DpSize(4.dp, 22.dp)) },
+                        track = { sliderState -> SliderDefaults.Track(sliderState,
+                            modifier = Modifier.height(8.dp), colors = volumeColors) }
+                    )
+                }
+                Row(
+                    modifier = Modifier.weight(50f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    IconButton(onClick = { connection.playPrevious() }, modifier = Modifier.size(40.dp)) {
+                        Icon(Icons.Default.SkipPrevious, contentDescription = "이전곡", modifier = Modifier.size(24.dp))
+                    }
+                    FilledTonalIconButton(onClick = { scope.launch { connection.togglePlayPause() } },
+                        modifier = Modifier.size(42.dp)) {
+                        Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            contentDescription = "재생", modifier = Modifier.size(26.dp))
+                    }
+                    IconButton(onClick = { connection.playNext() }, modifier = Modifier.size(40.dp)) {
+                        Icon(Icons.Default.SkipNext, contentDescription = "다음곡", modifier = Modifier.size(24.dp))
+                    }
+                }
+                Box(modifier = Modifier.weight(15f), contentAlignment = Alignment.Center) {
+                    IconButton(onClick = { connection.toggleTasteMode() }, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Default.AvTimer, contentDescription = "맛보기 재생",
+                            tint = if (isTasteMode) Color.Magenta else MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(26.dp))
+                    }
+                }
             }
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(2.dp))
             LyricsPanel(song = track, currentPosition = currentPosition)
         }
     }
