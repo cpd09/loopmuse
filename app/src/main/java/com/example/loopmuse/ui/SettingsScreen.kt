@@ -29,6 +29,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -66,7 +67,7 @@ import com.example.loopmuse.data.SongDisplaySettings
 import com.example.loopmuse.service.alarm.AlarmGlobalConfig
 import com.example.loopmuse.service.alarm.AlarmGlobalSettings
 
-private enum class SettingsPage { MENU, DATA, ABOUT }
+private enum class SettingsPage { MENU, DATA, ABOUT, HELP }
 
 @Composable
 private fun <T> SettingsDropdownButton(
@@ -170,9 +171,13 @@ fun SettingsScreen(
     }
     var page by remember { mutableStateOf(SettingsPage.MENU) }
     val goBack = {
-        if (page == SettingsPage.MENU) onBack() else {
-            page = SettingsPage.MENU
-            songDisplayConfig = SongDisplaySettings.read(context)
+        when (page) {
+            SettingsPage.MENU -> onBack()
+            SettingsPage.HELP -> page = SettingsPage.ABOUT
+            else -> {
+                page = SettingsPage.MENU
+                songDisplayConfig = SongDisplaySettings.read(context)
+            }
         }
     }
     BackHandler(onBack = goBack)
@@ -185,6 +190,7 @@ fun SettingsScreen(
                     SettingsPage.MENU -> "전체설정"
                     SettingsPage.DATA -> "백업 및 복원"
                     SettingsPage.ABOUT -> "앱 정보"
+                    SettingsPage.HELP -> "도움말"
                 }) },
                 navigationIcon = { IconButton(onClick = goBack) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로")
@@ -374,9 +380,22 @@ fun SettingsScreen(
                 }
                 Text("LoopMuse", style = MaterialTheme.typography.headlineSmall)
                 Text("버전 $versionName (코드 $versionCode)")
+                AppCard(Modifier.fillMaxWidth().clickable { page = SettingsPage.HELP }) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = AppCardStyle.horizontalPadding,
+                        vertical = AppCardStyle.verticalPadding), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.HelpOutline, contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary)
+                        Column(Modifier.weight(1f).padding(start = 16.dp)) {
+                            Text("도움말", style = MaterialTheme.typography.titleMedium)
+                            Text("화면별 간단 사용법", style = MaterialTheme.typography.bodySmall)
+                        }
+                        Icon(Icons.Default.ChevronRight, contentDescription = null)
+                    }
+                }
                 HorizontalDivider()
                 Text("실행 중인 정보는 앱 내부 데이터베이스에 저장합니다. 선택한 공유 폴더에는 복원용 백업 파일을 별도로 보관합니다.")
             }
+            SettingsPage.HELP -> HelpPage(Modifier.padding(padding))
         }
     }
 }
