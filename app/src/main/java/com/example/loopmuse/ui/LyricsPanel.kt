@@ -1,5 +1,7 @@
 package com.example.loopmuse.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -63,7 +65,35 @@ fun LyricsPanel(song: MusicFile?, currentPosition: Long) {
     var loading by remember(song?.fingerprintId) { mutableStateOf(false) }
     var searchOpen by remember(song?.fingerprintId) { mutableStateOf(false) }
     var expanded by remember(song?.fingerprintId) { mutableStateOf(false) }
+    var importError by remember(song?.fingerprintId) { mutableStateOf<String?>(null) }
+    var importing by remember(song?.fingerprintId) { mutableStateOf(false) }
+    var importSong by remember { mutableStateOf<MusicFile?>(null) }
     val lyrics = (result as? LyricsLoadResult.Found)?.lyrics
+    val lrcPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val target = importSong
+        importSong = null
+        if (uri != null && target != null && target.fingerprintId == song?.fingerprintId) {
+            importing = true
+            importError = null
+            scope.launch {
+                try {
+                    when (val found = repository.importLrc(target, uri)) {
+                        is LyricsLoadResult.Found -> {
+                            result = found
+                            searchOpen = false
+                        }
+                        is LyricsLoadResult.Unavailable -> importError = found.message
+                        is LyricsLoadResult.Candidates -> Unit
+                    }
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    importError = "가사 파일을 저장하지 못했습니다. 다시 시도해 주세요."
+                } finally {
+                    importing = false
+                }
+            }
+        }
+    }
 
     LaunchedEffect(song?.fingerprintId) {
         if (song != null) {
@@ -83,7 +113,7 @@ fun LyricsPanel(song: MusicFile?, currentPosition: Long) {
                 Text("가사", fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (lyrics != null) {
-                    Text(" · ${if (lyrics.source == "local") "내 파일" else "LRCLIB"}",
+                    Text(" · ${if (lyrics.source == "LRCLIB") "LRCLIB" else "내 파일"}",
                         fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
@@ -158,7 +188,7 @@ fun LyricsPanel(song: MusicFile?, currentPosition: Long) {
         LaunchedEffect((result as? LyricsLoadResult.Candidates)?.songs) {
             (result as? LyricsLoadResult.Candidates)?.let { candidates = it.songs }
         }
-        Dialog(onDismissRequest = { if (!searching) searchOpen = false }) {
+        Dialog(onDismissRequest = { if (!searching && !importing) searchOpen = false }) {
             Surface(
                 modifier = Modifier.fillMaxWidth().heightIn(max = LocalConfiguration.current.screenHeightDp.dp * 0.82f).imePadding(),
                 shape = RoundedCornerShape(20.dp),
@@ -175,7 +205,7 @@ fun LyricsPanel(song: MusicFile?, currentPosition: Long) {
                         Text("가사 찾기", style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold)
                     }
-                    Text("곡 정보가 다르면 고쳐서 다시 찾아보세요.",
+                    Text("곡 정보가 다르면 고쳐서 다시 찾거나 .lrc 파일을 선택해 주세요.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                     OutlinedTextField(value = title, onValueChange = {
@@ -186,6 +216,15 @@ fun LyricsPanel(song: MusicFile?, currentPosition: Long) {
                         artist = it; candidates = emptyList(); searchError = null
                     }, label = { Text("가수") },
                         singleLine = true, shape = AppButtonStyle.shape, modifier = Modifier.fillMaxWidth())
+                    AppOutlinedButton(onClick = {
+                        importError = null
+                        importSong = song
+                        lrcPicker.launch(arrayOf("*/*"))
+                    }, enabled = !searching && !importing) {
+                        Text("내 .lrc 파일 선택")
+                    }
+                    importError?.let { Text(it, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error) }
                     searchError?.let { Text(it, style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error) }
                     if (candidates.isNotEmpty()) {
@@ -193,7 +232,7 @@ fun LyricsPanel(song: MusicFile?, currentPosition: Long) {
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                         candidates.forEach { candidate ->
-                            LyricsCandidateRow(candidate, enabled = !searching) {
+                            LyricsCandidateRow(candidate, enabled = !searching && !importing) {
                                 searching = true
                                 scope.launch {
                                     try {
@@ -211,7 +250,7 @@ fun LyricsPanel(song: MusicFile?, currentPosition: Long) {
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End,
                         verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = { searchOpen = false }, enabled = !searching) { Text("취소") }
+                        TextButton(onClick = { searchOpen = false }, enabled = !searching && !importing) { Text("취소") }
                         androidx.compose.foundation.layout.Spacer(Modifier.size(8.dp))
                         AppButton(onClick = {
                             searching = true
@@ -234,7 +273,7 @@ fun LyricsPanel(song: MusicFile?, currentPosition: Long) {
                                     searching = false
                                 }
                             }
-                        }, enabled = !searching && title.isNotBlank() && artist.isNotBlank(),
+                        }, enabled = !searching && !importing && title.isNotBlank() && artist.isNotBlank(),
                             elevation = null) {
                             if (searching) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                             else Text("찾기")

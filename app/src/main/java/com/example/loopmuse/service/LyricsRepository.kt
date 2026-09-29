@@ -1,6 +1,8 @@
 package com.example.loopmuse.service
 
 import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
 import com.example.loopmuse.BuildConfig
 import com.example.loopmuse.data.MusicFile
 import com.example.loopmuse.data.db.AppDatabase
@@ -14,10 +16,14 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.text.Normalizer
+import java.nio.ByteBuffer
+import java.nio.charset.Charset
+import java.nio.charset.CodingErrorAction
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -42,22 +48,27 @@ data class TimedLyricLine(val timeMs: Long, val text: String)
 
 /** Keeps lyrics beside song metadata so normal app updates and LoopMuse backups retain them. */
 class LyricsRepository(context: Context) {
+    private val resolver = context.applicationContext.contentResolver
     private val dao = AppDatabase.getDatabase(context).lyricsDao()
 
     suspend fun load(song: MusicFile): LyricsLoadResult = withContext(Dispatchers.IO) {
-        dao.getById(song.fingerprintId)?.let { return@withContext LyricsLoadResult.Found(it) }
-        val sidecar = File(song.file.parentFile, "${song.file.nameWithoutExtension}.lrc")
-        if (sidecar.isFile && sidecar.length() in 1..100_000) {
-            val local = runCatching { sidecar.readText(Charsets.UTF_8) }.getOrNull()
+        val cached = dao.getById(song.fingerprintId)
+        if (cached != null && cached.source != "LRCLIB") return@withContext LyricsLoadResult.Found(cached)
+        val sidecarName = "${song.file.nameWithoutExtension}.lrc"
+        val sidecar = File(song.file.parentFile, sidecarName).takeIf { it.isFile }
+            ?: song.file.parentFile?.listFiles()?.firstOrNull {
+                it.isFile && it.name.equals(sidecarName, ignoreCase = true)
+            }
+        if (sidecar != null && sidecar.length() in 1..100_000) {
+            val local = runCatching { decodeLocalLyrics(sidecar.readBytes()) }.getOrNull()
             if (!local.isNullOrBlank()) {
-                val timed = parseTimedLyrics(local)
-                val entity = LyricsEntity(song.fingerprintId, song.title, song.artist,
-                    if (timed.isNotEmpty()) timed.joinToString("\n") { it.text } else local.trim(),
-                    if (timed.isNotEmpty()) local else "", "local", System.currentTimeMillis())
-                dao.insertOrUpdate(entity)
-                return@withContext LyricsLoadResult.Found(entity)
+                saveLocal(song, local, "local")?.let { return@withContext it }
             }
         }
+        EmbeddedLyricsReader.read(song.file)?.let { embedded ->
+            saveLocal(song, embedded, "embedded")?.let { return@withContext it }
+        }
+        if (cached != null) return@withContext LyricsLoadResult.Found(cached)
         val (title, artist) = lyricSearchFields(song)
         if (title.isBlank() || artist.isBlank()) {
             return@withContext LyricsLoadResult.Unavailable("곡명과 가수 정보가 없어 가사를 찾을 수 없습니다.")
@@ -79,6 +90,46 @@ class LyricsRepository(context: Context) {
 
     suspend fun select(song: MusicFile, candidate: LyricsCandidate): LyricsLoadResult = withContext(Dispatchers.IO) {
         save(song, candidate)
+    }
+
+    suspend fun importLrc(song: MusicFile, uri: Uri): LyricsLoadResult = withContext(Dispatchers.IO) {
+        val name = runCatching {
+            resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
+        }.getOrNull() ?: uri.lastPathSegment.orEmpty()
+        if (!name.endsWith(".lrc", ignoreCase = true)) {
+            return@withContext LyricsLoadResult.Unavailable(".lrc 가사 파일을 선택해 주세요.")
+        }
+        val bytes = runCatching {
+            resolver.openInputStream(uri)?.use { input ->
+                val output = ByteArrayOutputStream()
+                val chunk = ByteArray(8192)
+                while (true) {
+                    val read = input.read(chunk)
+                    if (read < 0) break
+                    if (output.size() + read > 100_000) return@use null
+                    output.write(chunk, 0, read)
+                }
+                output.toByteArray()
+            }
+        }.getOrNull() ?: return@withContext LyricsLoadResult.Unavailable("가사 파일을 읽지 못했습니다. 100KB 이하의 파일을 선택해 주세요.")
+        val content = decodeLocalLyrics(bytes)
+            ?: return@withContext LyricsLoadResult.Unavailable("가사 파일의 내용을 읽지 못했습니다.")
+        saveLocal(song, content, "imported")
+            ?: LyricsLoadResult.Unavailable("표시할 가사가 없는 파일입니다.")
+    }
+
+    private suspend fun saveLocal(song: MusicFile, content: String, source: String): LyricsLoadResult.Found? {
+        val timed = parseTimedLyrics(content)
+        val plain = if (timed.isNotEmpty()) timed.joinToString("\n") { it.text }
+            else content.lineSequence().filterNot { it.trim().matches(Regex("\\[(ti|ar|al|by|offset):.*]", RegexOption.IGNORE_CASE)) }
+                .joinToString("\n").trim()
+        if (plain.isBlank() || plain.length > 100_000 || content.length > 100_000) return null
+        val entity = LyricsEntity(song.fingerprintId, song.title, song.artist,
+            plain, if (timed.isNotEmpty()) content else "", source, System.currentTimeMillis())
+        dao.insertOrUpdate(entity)
+        return LyricsLoadResult.Found(entity)
     }
 
     private suspend fun save(song: MusicFile, candidate: LyricsCandidate): LyricsLoadResult.Found {
@@ -226,6 +277,28 @@ class LyricsRepository(context: Context) {
         private val requestMutex = Mutex()
         private var lastRequestAt = 0L
         private var nextAllowedAt = 0L
+    }
+}
+
+internal fun decodeLocalLyrics(bytes: ByteArray): String? {
+    if (bytes.isEmpty() || bytes.size > 100_000) return null
+    val decoded = try {
+        when {
+            bytes.size >= 3 && bytes[0] == 0xef.toByte() && bytes[1] == 0xbb.toByte() &&
+                bytes[2] == 0xbf.toByte() -> String(bytes, 3, bytes.size - 3, Charsets.UTF_8)
+            bytes.size >= 2 && ((bytes[0] == 0xff.toByte() && bytes[1] == 0xfe.toByte()) ||
+                (bytes[0] == 0xfe.toByte() && bytes[1] == 0xff.toByte())) -> String(bytes, Charsets.UTF_16)
+            else -> runCatching {
+                Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(bytes)).toString()
+            }.getOrElse { String(bytes, Charset.forName("EUC-KR")) }
+        }
+    } catch (_: Exception) {
+        return null
+    }
+    return decoded.trim('\uFEFF', '\u0000', ' ', '\n', '\r').takeIf {
+        it.isNotBlank() && '\u0000' !in it && it.count { char -> char.isISOControl() && char != '\n' && char != '\r' && char != '\t' } == 0
     }
 }
 

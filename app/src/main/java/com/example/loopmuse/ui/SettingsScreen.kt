@@ -197,7 +197,6 @@ fun SettingsScreen(
                 Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text("백업설정", style = MaterialTheme.typography.titleMedium)
                 AppCard(Modifier.fillMaxWidth().clickable { page = SettingsPage.DATA }) {
                     Row(Modifier.fillMaxWidth().padding(horizontal = AppCardStyle.horizontalPadding,
                         vertical = AppCardStyle.verticalPadding), verticalAlignment = Alignment.CenterVertically) {
@@ -338,7 +337,6 @@ fun SettingsScreen(
                     }
                 }
                 Spacer(Modifier.height(8.dp))
-                Text("앱", style = MaterialTheme.typography.titleMedium)
                 AppCard(Modifier.fillMaxWidth().clickable { page = SettingsPage.ABOUT }) {
                     Row(Modifier.fillMaxWidth().padding(horizontal = AppCardStyle.horizontalPadding,
                         vertical = AppCardStyle.verticalPadding), verticalAlignment = Alignment.CenterVertically) {
