@@ -1,5 +1,6 @@
 package com.example.loopmuse.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -45,10 +46,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.loopmuse.data.MusicFile
+import com.example.loopmuse.service.LyricsCandidate
 import com.example.loopmuse.service.LyricsLoadResult
 import com.example.loopmuse.service.LyricsRepository
 import com.example.loopmuse.service.lyricSearchFields
 import com.example.loopmuse.service.parseTimedLyrics
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 @Composable
@@ -71,7 +74,7 @@ fun LyricsPanel(song: MusicFile?, currentPosition: Long) {
     }
 
     Surface(
-        modifier = Modifier.fillMaxWidth().height(128.dp),
+        modifier = Modifier.fillMaxWidth().height(88.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
         shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
     ) {
@@ -104,9 +107,9 @@ fun LyricsPanel(song: MusicFile?, currentPosition: Long) {
                     val timed = remember(lyrics.syncedLyrics) { parseTimedLyrics(lyrics.syncedLyrics) }
                     if (timed.isNotEmpty()) {
                         val active = timed.indexOfLast { it.timeMs <= currentPosition }
-                        val start = (active - 2).coerceIn(0, (timed.size - 5).coerceAtLeast(0))
+                        val start = (active - 1).coerceIn(0, (timed.size - 3).coerceAtLeast(0))
                         Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
-                            repeat(5) { index ->
+                            repeat(3) { index ->
                                 val itemIndex = start + index
                                 val line = timed.getOrNull(itemIndex)
                                 Text(
@@ -134,6 +137,8 @@ fun LyricsPanel(song: MusicFile?, currentPosition: Long) {
                         )
                     }
                 }
+                result is LyricsLoadResult.Candidates ->
+                    LyricsMessage("가사 후보가 있습니다. 돋보기를 눌러 곡을 선택해 주세요.")
                 else -> LyricsMessage((result as? LyricsLoadResult.Unavailable)?.message ?: "가사를 불러오는 중입니다.")
             }
         }
@@ -147,6 +152,12 @@ fun LyricsPanel(song: MusicFile?, currentPosition: Long) {
         var artist by remember(song.fingerprintId) { mutableStateOf(initial.second) }
         var searchError by remember(song.fingerprintId) { mutableStateOf<String?>(null) }
         var searching by remember(song.fingerprintId) { mutableStateOf(false) }
+        var candidates by remember(song.fingerprintId) {
+            mutableStateOf((result as? LyricsLoadResult.Candidates)?.songs.orEmpty())
+        }
+        LaunchedEffect((result as? LyricsLoadResult.Candidates)?.songs) {
+            (result as? LyricsLoadResult.Candidates)?.let { candidates = it.songs }
+        }
         Dialog(onDismissRequest = { if (!searching) searchOpen = false }) {
             Surface(
                 modifier = Modifier.fillMaxWidth().heightIn(max = LocalConfiguration.current.screenHeightDp.dp * 0.82f).imePadding(),
@@ -167,12 +178,37 @@ fun LyricsPanel(song: MusicFile?, currentPosition: Long) {
                     Text("곡 정보가 다르면 고쳐서 다시 찾아보세요.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("곡명") },
+                    OutlinedTextField(value = title, onValueChange = {
+                        title = it; candidates = emptyList(); searchError = null
+                    }, label = { Text("곡명") },
                         singleLine = true, shape = AppButtonStyle.shape, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(value = artist, onValueChange = { artist = it }, label = { Text("가수") },
+                    OutlinedTextField(value = artist, onValueChange = {
+                        artist = it; candidates = emptyList(); searchError = null
+                    }, label = { Text("가수") },
                         singleLine = true, shape = AppButtonStyle.shape, modifier = Modifier.fillMaxWidth())
                     searchError?.let { Text(it, style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error) }
+                    if (candidates.isNotEmpty()) {
+                        Text("곡명과 가수를 확인하고 가사를 선택해 주세요.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        candidates.forEach { candidate ->
+                            LyricsCandidateRow(candidate, enabled = !searching) {
+                                searching = true
+                                scope.launch {
+                                    try {
+                                        result = repository.select(song, candidate)
+                                        searchOpen = false
+                                    } catch (error: Exception) {
+                                        if (error is CancellationException) throw error
+                                        searchError = "선택한 가사를 저장하지 못했습니다. 다시 시도해 주세요."
+                                    } finally {
+                                        searching = false
+                                    }
+                                }
+                            }
+                        }
+                    }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End,
                         verticalAlignment = Alignment.CenterVertically) {
                         TextButton(onClick = { searchOpen = false }, enabled = !searching) { Text("취소") }
@@ -180,15 +216,23 @@ fun LyricsPanel(song: MusicFile?, currentPosition: Long) {
                         AppButton(onClick = {
                             searching = true
                             searchError = null
+                            candidates = emptyList()
                             scope.launch {
-                                when (val found = repository.search(song, title, artist)) {
-                                    is LyricsLoadResult.Found -> {
-                                        result = found
-                                        searchOpen = false
+                                try {
+                                    when (val found = repository.search(song, title, artist)) {
+                                        is LyricsLoadResult.Found -> {
+                                            result = found
+                                            searchOpen = false
+                                        }
+                                        is LyricsLoadResult.Candidates -> candidates = found.songs
+                                        is LyricsLoadResult.Unavailable -> searchError = found.message
                                     }
-                                    is LyricsLoadResult.Unavailable -> searchError = found.message
+                                } catch (error: Exception) {
+                                    if (error is CancellationException) throw error
+                                    searchError = "가사를 찾지 못했습니다. 잠시 후 다시 시도해 주세요."
+                                } finally {
+                                    searching = false
                                 }
-                                searching = false
                             }
                         }, enabled = !searching && title.isNotBlank() && artist.isNotBlank(),
                             elevation = null) {
@@ -215,6 +259,27 @@ fun LyricsPanel(song: MusicFile?, currentPosition: Long) {
             },
             confirmButton = { TextButton(onClick = { expanded = false }) { Text("닫기") } }
         )
+    }
+}
+
+@Composable
+private fun LyricsCandidateRow(candidate: LyricsCandidate, enabled: Boolean, onClick: () -> Unit) {
+    val duration = candidate.durationSeconds?.let { "%d:%02d".format(it / 60, it % 60) }
+    val details = listOfNotNull(candidate.artist, candidate.album.takeIf { it.isNotBlank() }, duration)
+        .joinToString(" · ")
+    Surface(
+        modifier = Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onClick),
+        shape = AppButtonStyle.shape,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+        border = AppCardStyle.border()
+    ) {
+        Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+            Text(candidate.title, style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(details, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
     }
 }
 

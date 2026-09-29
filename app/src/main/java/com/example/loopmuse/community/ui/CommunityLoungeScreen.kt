@@ -1,10 +1,5 @@
 package com.example.loopmuse.community.ui
 
-import android.content.ActivityNotFoundException
-import android.content.Context
-import android.content.Intent
-import android.net.Uri
-import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -47,6 +42,7 @@ import com.example.loopmuse.ui.AppFolderTab
 import com.example.loopmuse.ui.SoftBlueFolderColor
 import com.example.loopmuse.ui.SoftGreenFolderColor
 import com.example.loopmuse.ui.DiscoveryRecommendationsPage
+import com.example.loopmuse.ui.openYouTubeSearch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -534,17 +530,5 @@ fun SongPostCard(
                     })
             }
         }
-    }
-}
-
-private fun openYouTubeSearch(context: Context, artist: String, title: String) {
-    val uri = Uri.parse("https://www.youtube.com/results")
-        .buildUpon()
-        .appendQueryParameter("search_query", artist.trim() + " " + title.trim())
-        .build()
-    try {
-        context.startActivity(Intent(Intent.ACTION_VIEW, uri))
-    } catch (_: ActivityNotFoundException) {
-        Toast.makeText(context, "웹 링크를 열 수 있는 앱이 없습니다.", Toast.LENGTH_SHORT).show()
     }
 }

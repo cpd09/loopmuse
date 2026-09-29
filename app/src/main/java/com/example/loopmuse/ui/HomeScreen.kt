@@ -1283,10 +1283,12 @@ fun NowPlayingCardExpanded(
             )
             Spacer(modifier = Modifier.height(4.dp))
             Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
-                Slider(value = if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f, onValueChange = { connection.seekTo((it * duration).toLong()) }, modifier = Modifier.fillMaxWidth().height(24.dp), colors = if (isTasteMode) SliderDefaults.colors(activeTrackColor = Color.Magenta) else SliderDefaults.colors())
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(formatTime(currentPosition), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(formatTime(duration), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Box(modifier = Modifier.fillMaxWidth().height(30.dp)) {
+                    Slider(value = if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f, onValueChange = { connection.seekTo((it * duration).toLong()) }, modifier = Modifier.fillMaxWidth().height(22.dp).align(Alignment.TopCenter), colors = if (isTasteMode) SliderDefaults.colors(activeTrackColor = Color.Magenta) else SliderDefaults.colors())
+                    Row(modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(formatTime(currentPosition), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(formatTime(duration), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
             Spacer(modifier = Modifier.height(4.dp))
