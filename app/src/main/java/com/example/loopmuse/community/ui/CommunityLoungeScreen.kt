@@ -54,6 +54,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.widget.Toast
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Block
+import androidx.compose.ui.window.Dialog
 import com.example.loopmuse.community.model.SongPost
 import com.example.loopmuse.community.model.PostComment
 import com.example.loopmuse.community.model.PostVote
@@ -115,7 +116,9 @@ fun RecommendationComposer(
     requireSong: Boolean = false,
     alwaysShowSongFields: Boolean = false,
     forSongDialog: Boolean = false,
-    messagePlaceholder: String = "좋았던 곡이나 오늘의 한마디를 남겨 주세요"
+    messagePlaceholder: String = "좋았던 곡이나 오늘의 한마디를 남겨 주세요",
+    submitLabel: String = "글남기기",
+    onCancel: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val showSongFields = requireSong || alwaysShowSongFields || draft.includeSong
@@ -126,19 +129,20 @@ fun RecommendationComposer(
         (!showSongFields || artistProvided == titleProvided) &&
         draft.artist.length <= 100 && draft.title.length <= 100
 
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    val fieldShape = RoundedCornerShape(12.dp)
+
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         OutlinedTextField(
             value = draft.message,
             onValueChange = { if (it.length <= 500) onDraftChange(draft.copy(message = it)) },
             label = { Text("짧은 글") },
             placeholder = { Text(messagePlaceholder) },
-            supportingText = { Text(draft.message.length.toString() + "/500") },
-            minLines = if (forSongDialog) 5 else 2,
-            maxLines = if (forSongDialog) 8 else 4,
+            supportingText = { Text("${draft.message.length}/500") },
+            minLines = 3,
+            maxLines = 6,
+            shape = fieldShape,
             enabled = !isSubmitting,
-            modifier = Modifier.fillMaxWidth().then(
-                if (forSongDialog) Modifier.heightIn(min = 160.dp) else Modifier
-            )
+            modifier = Modifier.fillMaxWidth()
         )
 
         if (!requireSong && !alwaysShowSongFields) {
@@ -151,47 +155,33 @@ fun RecommendationComposer(
         }
 
         if (showSongFields) {
-            if (forSongDialog) {
-                CompactSongField(
-                    label = "가수명",
-                    value = draft.artist,
-                    onValueChange = { if (it.length <= 100) onDraftChange(draft.copy(artist = it)) },
-                    enabled = !isSubmitting
-                )
-                CompactSongField(
-                    label = "곡 제목",
-                    value = draft.title,
-                    onValueChange = { if (it.length <= 100) onDraftChange(draft.copy(title = it)) },
-                    enabled = !isSubmitting
-                )
-            } else {
-                OutlinedTextField(
-                    value = draft.artist,
-                    onValueChange = { if (it.length <= 100) onDraftChange(draft.copy(artist = it)) },
-                    label = { Text("가수명") },
-                    singleLine = true,
-                    enabled = !isSubmitting,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = draft.title,
-                    onValueChange = { if (it.length <= 100) onDraftChange(draft.copy(title = it)) },
-                    label = { Text("곡 제목") },
-                    singleLine = true,
-                    enabled = !isSubmitting,
-                    modifier = Modifier.fillMaxWidth()
+            OutlinedTextField(
+                value = draft.artist,
+                onValueChange = { if (it.length <= 100) onDraftChange(draft.copy(artist = it)) },
+                label = { Text("가수명") },
+                placeholder = { Text("가수 또는 아티스트 입력") },
+                singleLine = true,
+                shape = fieldShape,
+                enabled = !isSubmitting,
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = draft.title,
+                onValueChange = { if (it.length <= 100) onDraftChange(draft.copy(title = it)) },
+                label = { Text("곡 제목") },
+                placeholder = { Text("노래 제목 입력") },
+                singleLine = true,
+                shape = fieldShape,
+                enabled = !isSubmitting,
+                modifier = Modifier.fillMaxWidth()
+            )
+            if ((requireSong && (!artistProvided || !titleProvided)) || artistProvided != titleProvided) {
+                Text(
+                    "곡을 추천하려면 가수명과 곡 제목을 모두 입력해 주세요.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
                 )
             }
-            Text(
-                if ((requireSong && (!artistProvided || !titleProvided)) || artistProvided != titleProvided)
-                    "곡을 추천하려면 가수명과 곡 제목을 모두 입력해 주세요."
-                else if (requireSong) "글 하단에 가수명과 곡 제목으로 YouTube 검색 링크가 표시됩니다."
-                else "가수·곡명을 입력하면 YouTube 링크가 붙습니다.",
-                style = MaterialTheme.typography.bodySmall,
-                color = if ((requireSong && (!artistProvided || !titleProvided)) || artistProvided != titleProvided)
-                    MaterialTheme.colorScheme.error
-                    else MaterialTheme.colorScheme.onSurfaceVariant
-            )
         }
 
         if (error != null) {
@@ -199,78 +189,60 @@ fun RecommendationComposer(
         }
 
         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-            val compact = maxWidth < 300.dp
-            val actionFontSize = if (compact) 12.sp else 14.sp
-            val actionPadding = PaddingValues(horizontal = if (compact) 8.dp else 12.dp, vertical = 8.dp)
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            val isNarrow = maxWidth < 340.dp
+            val actionFontSize = if (isNarrow) 12.sp else 13.sp
+            val btnPadding = PaddingValues(horizontal = if (isNarrow) 8.dp else 12.dp, vertical = 8.dp)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 if (showSongFields) {
                     AppOutlinedButton(
                         onClick = { openYouTubeSearch(context, draft.artist, draft.title) },
                         enabled = artistProvided && titleProvided && !isSubmitting,
-                        modifier = if (compact) Modifier.weight(1f) else Modifier,
-                        contentPadding = actionPadding
+                        contentPadding = btnPadding
                     ) {
-                        Text("유튜브 검색테스트", fontSize = actionFontSize,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            "유튜브 검색테스트",
+                            fontSize = actionFontSize,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
-                Spacer(if (compact && showSongFields) Modifier.width(8.dp) else Modifier.weight(1f))
+                Spacer(Modifier.weight(1f))
+                if (onCancel != null) {
+                    AppOutlinedButton(
+                        onClick = onCancel,
+                        enabled = !isSubmitting,
+                        contentPadding = btnPadding
+                    ) {
+                        Text("취소", fontSize = actionFontSize)
+                    }
+                    Spacer(Modifier.width(8.dp))
+                }
                 AppButton(
                     onClick = onPublish,
                     enabled = messageValid && songValid && !isSubmitting,
-                    modifier = if (compact && showSongFields) Modifier.weight(0.65f) else Modifier,
-                    contentPadding = actionPadding
+                    contentPadding = btnPadding
                 ) {
                     if (isSubmitting) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
                     } else {
-                        Text("저장하기", fontSize = actionFontSize,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            submitLabel,
+                            fontSize = actionFontSize,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun CompactSongField(
-    label: String,
-    value: String,
-    onValueChange: (String) -> Unit,
-    enabled: Boolean
-) {
-    val fieldShape = RoundedCornerShape(12.dp)
-    var isFocused by remember { mutableStateOf(false) }
-    Row(
-        modifier = Modifier.fillMaxWidth()
-            .height(44.dp)
-            .clip(fieldShape)
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.6f))
-            .border(
-                if (isFocused) 2.dp else 1.dp,
-                if (isFocused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
-                fieldShape
-            )
-            .padding(horizontal = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        Text(
-            label,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(48.dp)
-        )
-        BasicTextField(
-            value = value,
-            onValueChange = onValueChange,
-            enabled = enabled,
-            singleLine = true,
-            textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
-            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-            modifier = Modifier.weight(1f).onFocusChanged { isFocused = it.isFocused }
-        )
     }
 }
 
@@ -309,10 +281,8 @@ fun CommunityLoungeScreen(
     var publishError by remember { mutableStateOf<String?>(null) }
     val draft = RecommendationDraft(message, artist, title)
     val postsFolderColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
-    val writeFolderColor = SoftBlueFolderColor
     val discoveryFolderColor = SoftGreenFolderColor
     val postsListState = rememberLazyListState()
-    val composerSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     BackHandler(enabled = showDiscovery && !showComposer) {
         showDiscovery = false
@@ -495,64 +465,63 @@ fun CommunityLoungeScreen(
     }
 
     if (showComposer) {
-        ModalBottomSheet(
-            onDismissRequest = { if (!isSubmitting) showComposer = false },
-            sheetState = composerSheetState,
-            shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
-            containerColor = MaterialTheme.colorScheme.surface
-        ) {
-            Column(
-                modifier = Modifier.fillMaxWidth().imePadding()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = AppCardStyle.horizontalPadding, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+        Dialog(onDismissRequest = { if (!isSubmitting) showComposer = false }) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 600.dp)
+                    .imePadding(),
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 8.dp
             ) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("글 남기기", fontSize = 20.sp, fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.weight(1f))
-                    IconButton(onClick = { if (!isSubmitting) showComposer = false }) {
-                        Icon(Icons.Default.Close, contentDescription = "글쓰기 닫기")
-                    }
-                }
-                AppCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = writeFolderColor),
-                    elevation = 6.dp
-                ) {
-                    RecommendationComposer(
-                        draft = draft,
-                        onDraftChange = {
-                            message = it.message
-                            artist = it.artist
-                            title = it.title
-                            publishError = null
-                        },
-                        isSubmitting = isSubmitting,
-                        error = publishError,
-                        alwaysShowSongFields = true,
-                        forSongDialog = true,
-                        messagePlaceholder = "인사말이나 짧은 글을 남겨 주세요",
-                        modifier = Modifier.padding(AppCardStyle.horizontalPadding, AppCardStyle.verticalPadding),
-                        onPublish = {
-                            scope.launch {
-                                isSubmitting = true
-                                publishError = null
-                                val result = viewModel.addPost(draft.message, draft.title, draft.artist)
-                                isSubmitting = false
-                                if (result.isSuccess) {
-                                    message = ""
-                                    artist = ""
-                                    title = ""
-                                    showComposer = false
-                                } else {
-                                    publishError = result.exceptionOrNull()?.message ?: "게시하지 못했습니다."
-                                }
+                val recommendationFolderColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+                Column(modifier = Modifier.padding(AppCardStyle.horizontalPadding)) {
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f, fill = false),
+                        shape = RoundedCornerShape(18.dp),
+                        color = recommendationFolderColor
+                    ) {
+                        Box(modifier = Modifier.padding(AppCardStyle.horizontalPadding)) {
+                            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                                RecommendationComposer(
+                                    draft = draft,
+                                    onDraftChange = {
+                                        message = it.message
+                                        artist = it.artist
+                                        title = it.title
+                                        publishError = null
+                                    },
+                                    isSubmitting = isSubmitting,
+                                    error = publishError,
+                                    alwaysShowSongFields = true,
+                                    forSongDialog = true,
+                                    messagePlaceholder = "좋았던 곡이나 오늘의 한마디를 남겨 주세요",
+                                    submitLabel = "글남기기",
+                                    onCancel = { if (!isSubmitting) showComposer = false },
+                                    onPublish = {
+                                        scope.launch {
+                                            isSubmitting = true
+                                            publishError = null
+                                            val result = viewModel.addPost(draft.message, draft.title, draft.artist)
+                                            isSubmitting = false
+                                            if (result.isSuccess) {
+                                                message = ""
+                                                artist = ""
+                                                title = ""
+                                                showComposer = false
+                                            } else {
+                                                publishError = result.exceptionOrNull()?.message ?: "게시하지 못했습니다."
+                                            }
+                                        }
+                                    }
+                                )
                             }
                         }
-                    )
+                    }
                 }
-                Spacer(Modifier.height(12.dp))
             }
         }
     }

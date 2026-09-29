@@ -1172,6 +1172,8 @@ fun SongEditDialog(
                                     error = publishError,
                                     requireSong = true,
                                     forSongDialog = true,
+                                    submitLabel = "글남기기",
+                                    onCancel = onDismiss,
                                     onPublish = {
                                         scope.launch {
                                             isSubmitting = true
@@ -1187,7 +1189,6 @@ fun SongEditDialog(
                                         }
                                     }
                                 )
-                                TextButton(onClick = onDismiss, enabled = !isSubmitting) { Text("취소") }
                             }
                         } else if (isLoading) {
                             CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))

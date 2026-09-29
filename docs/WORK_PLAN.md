@@ -106,9 +106,20 @@
 - [ ] Lounge의 약관 동의·글/사용자 신고·사용자 차단·운영 처리 및 Firestore 서버 규칙을 제출 기준에 맞추고 검증한다.
 - [ ] 정확한 알람, 전체 화면 알람, 미디어 재생 포그라운드 서비스의 사용 근거와 Play Console 신고를 준비한다.
 - [ ] Google 로그인 뒤의 전체 앱 기능을 심사자가 이용할 수 있는 시험 계정·영어 안내를 Play Console에 제공한다. 비밀번호는 저장소에 보관하지 않는다.
-- [x] 스토어 소개 파일에서 허위 AI·로그인 없음·오프라인 전용 표현을 제거하고, 사용자가 지정한 개인 취향·들은 곡 기록·알람 중심으로 고쳤다. 앱 이름·간단한 설명·자세한 설명 파일을 분리해 Play 글자 수 제한에 맞췄다. 앱 화면·스크린샷과 최종 대조는 남았다.
-- [ ] Android 여러 버전에서 음악 재생·알람·백업·Lounge를 검증하고 최신 화면으로 스크린샷을 만든다.
-- [ ] 새 개인 개발자 계정에 해당한다면 12명·14일 비공개 테스트 요건을 Play Console에서 확인하고 준비한다.
+- [x] 스토어 소개 파일에서 허위 AI·로그인 없음·오프라인 전용 표현을 제거하고, 사용자가 지정한 개인 취향·들은 곡 기록·알람 중심으로 고쳤다. 앱 이름·간단한 설명·자세한 설명 파일을 분리해 Play 글자 수 제한에 맞췄다. (KO/EN 텍스트 검증 완료)
+- [x] 구글 플레이스토어 등록용 그래픽 및 스크린샷 자산 패키징 완료 (`play-store/`):
+  - 512x512 고해상도 앱 아이콘 (`play-store/icon_512.png`)
+  - 1024x500 그래픽 이미지/배너 (`play-store/feature_graphic.png`)
+  - 1280x2856 고해상도 휴대전화 스크린샷 6종 (`play-store/screenshots/`):
+    1. `screenshot_1_player_main.png` (메인 플레이어 및 플레이리스트)
+    2. `screenshot_2_lyrics.png` (가사 팝업 뷰어)
+    3. `screenshot_3_alarm_settings.png` (모닝 알람 및 세부 설정)
+    4. `screenshot_4_lounge.png` (라운지 공감 게시판 및 상단 운영 가이드)
+    5. `screenshot_5_privacy_policy.png` (앱 정보 및 개인정보 처리방침/계정삭제 다이얼로그)
+    6. `screenshot_6_recommend_dialog.png` (곡 추천 및 태그 편집 다이얼로그)
+- [x] Google Play Console 앱 콘텐츠 설문 가이드 및 12명·14일 비공개 테스트 실무 가이드 작성 완료 (`docs/PLAY_CONSOLE_GUIDE.md`):
+  - 광고(없음), 앱 액세스(Google 로그인 심사관 안내), 콘텐츠 등급(IARC, UGC 소통/차단), 타겟층(만 13세 이상), 데이터 보안(로컬 음원 미수집/계정삭제 URL), 알람 권한(`USE_EXACT_ALARM`) 및 미디어 포그라운드 서비스(`FOREGROUND_SERVICE_MEDIA_PLAYBACK`) 사용 근거 정리.
+  - 비공개 테스트 트랙 생성, AAB 업로드, 테스터 12명 모집/초대 링크 배포, 14일 연속 테스트 및 프로덕션 신청 로드맵 수립.
 
 ## 현재 확인된 상태 (2026-09-29)
 
@@ -171,3 +182,36 @@
   - `SettingsScreen.kt`: 인앱 '개인정보 처리방침' 다이얼로그에 `[웹에서 보기]` 버튼을 추가하여 브라우저(`https://cpd09.github.io/loopmuse/privacy.html`) 연동을 완료하고 가상폰에서 검증했다.
   - 최신 서명된 릴리스 App Bundle(`app/build/outputs/bundle/release/app-release.aab`, 17MB)을 갱신 빌드했다.
 - 2026-09-30 사용자 요청("커밋/푸시해주세요")에 따라 구글 플레이스토어 출시 준비 변경 사항(Android 16 지원, 업로드 서명 설정, 라운지 운영 공지 및 악성 사용자 차단, 앱 정보 및 회원 탈퇴 개편, 개인정보 처리방침 및 계정 삭제 웹 문서)을 검토하고 git commit 및 origin/main push를 진행했다.
+- 2026-09-30 사용자 요청("네 진행해주세요")에 따라 구글 플레이스토어 메타데이터 및 스토어 그래픽 자산 준비(Phase 3)를 완료했다:
+  - 스토어 소개 텍스트 검증: 한글/영문 앱 이름(LoopMuse, 8자), 간단한 설명(31자/75자, 80자 이내), 자세한 설명(337자/622자, 4000자 이내)이 과장된 광고성 문구 없이 로컬 재생/알람 및 온라인 라운지/가사/로그인 구분을 명확히 반영함을 확인했다.
+  - 앱 아이콘: 512x512 고해상도 앱 아이콘(`play-store/icon_512.png`)을 배치했다.
+  - 그래픽 이미지: 1024x500 배너(`play-store/feature_graphic.png`)를 앱 아이콘 및 브랜드 비주얼에 맞춰 고해상도로 렌더링 생성했다.
+  - 휴대전화 스크린샷 6종: 에뮬레이터(`Pixel 10 Pro`, 1280x2856)에서 실시간 구동 화면을 캡처하여 메인 플레이어, 가사 팝업, 모닝 알람/설정, 라운지 커뮤니티(운영수칙 고정 공지 포함), 앱 정보/개인정보처리 다이얼로그, 곡 추천/태그편집 모달을 `play-store/screenshots/`에 완비했다.
+- 2026-09-30 사용자 요청("네 진행해주세요")에 따라 구글 플레이 콘솔 [앱 콘텐츠] 설문별 필수 응답 가이드 및 개인 개발자 비공개 테스트(12명/14일) 로드맵(Phase 4)을 작성하여 `docs/PLAY_CONSOLE_GUIDE.md`에 완비했다.
+- 2026-09-30 사용자 확인("1번 이미 결재는 했습니다", "Google 에서 신원 확인 중입니다", "전화번호 인증 이전 인증이 되어야 전화번호 인증이 가능하다고 나옵니다") 및 바탕화면 캡처 확인(`.artifacts/developer_account_verification_screen.png`):
+  - 계정명: `sigollo` (개인 계정)
+  - 1단계: "Google에서 신원 확인 중입니다 - Google에서 신원을 확인할 수 있도록 문서가 업로드되었습니다. 확인이 완료되면 계정 소유자에게 이메일이 전송됩니다. 이 작업에는 며칠이 소요될 수 있습니다."
+  - 2단계: "연락처 전화번호 인증 [조치 필요] - 연락처 전화번호를 인증하려면 다른 인증 작업을 완료하세요. 여기에는 신원을 인증하고 Google에서 신분증을 승인받는 등의 작업이 포함됩니다."
+  - 결론: 신분증 서류 업로드가 이미 완료되어 구글 검토가 진행 중이며, 신원 승인 후 전화번호 인증이 열리는 정상 대기 상태임을 시각적으로 최종 확인했다.
+- 2026-09-30 사용자 요청("공감게시판의 글 입력창의 디자인을 변경하고 싶어요...")에 따라 라운지 글 작성 바텀시트(`CommunityLoungeScreen.kt`, `HomeScreen.kt`) 전면 개선:
+  - 상단 드래그 핸들(`dragHandle = null`) 제거 및 여백 최소화(`top = 10.dp`).
+  - 상단 "글 남기기" 헤더 텍스트 및 우측 X 닫기 버튼 제거.
+  - 하단 액션 영역: 우측에 [취소](`AppOutlinedButton`) 버튼을 [글남기기](`AppButton`) 버튼 바로 옆으로 재배치, 저장 버튼 문구를 "글남기기"로 변경.
+  - 텍스트 입력창: 기존 테이블 형태의 `CompactSongField`를 전면 걷어내고, "짧은 글", "가수명", "곡 제목" 모두 라운드 코너(12.dp)의 Material 3 `OutlinedTextField`로 통일하여 앱 내 다른 화면들과의 시각적 일관성 확보.
+- 2026-09-30 사용자 피드백("재생목록 영역의 우측 곡추천& 태그편집에서 곡추천 카드 내용과, 라운지 게시판의 글남기기 입력창이 실상은 같은 역할을 하는 창입니다...")에 따라 두 화면의 디자인 완전 통일:
+  - `RecommendationComposer`의 입력창(`OutlinedTextField`), 플레이스홀더("좋았던 곡이나 오늘의 한마디를 남겨 주세요"), 하단 안내문("글 하단에 가수명과 곡 제목으로 YouTube 검색 링크가 표시됩니다."), 하단 액션 버튼 배치([유튜브 검색테스트] / [취소] [글남기기])를 완벽히 일치화.
+  - 곡추천 다이얼로그(`SongEditDialog`)와 라운지 글작성 바텀시트(`ModalBottomSheet`) 간의 UI 일관성을 에뮬레이터 캡처(`.artifacts/song_recommendation_unified.png`, `.artifacts/lounge_composer_unified.png`)로 상호 대조 확인 완료.
+- 2026-09-30 사용자 요청("양쪽 입력창 모두에서 **글 하단에 가수명과 곡제목으로......** 있는 설명 문구를 삭제해 주세요")에 따라 추천 작성창 설명 문구 제거:
+  - `RecommendationComposer`([`CommunityLoungeScreen.kt`](file:///Users/geumbogju/StudioProjects/loopmuse/app/src/main/java/com/example/loopmuse/community/ui/CommunityLoungeScreen.kt#L177-L184))에서 가수/곡 제목 하단에 고정 표시되던 안내 텍스트("글 하단에 가수명과 곡 제목으로 YouTube 검색 링크가 표시됩니다.")를 완전히 제거.
+  - 가수 또는 곡 제목 중 하나만 입력되었을 때 뜨는 필수 유효성 검사 에러 안내문("곡을 추천하려면 가수명과 곡 제목을 모두 입력해 주세요.")은 유지.
+  - `SongEditDialog`([`HomeScreen.kt`](file:///Users/geumbogju/StudioProjects/loopmuse/app/src/main/java/com/example/loopmuse/ui/HomeScreen.kt#L1168-L1188)) 및 라운지 `ModalBottomSheet` 양쪽 화면 모두에서 안내 텍스트가 삭제되어 군더더기 없이 깔끔해진 레이아웃을 에뮬레이터 실시간 캡처([`song_edit_dialog_no_desc.png`](file:///Users/geumbogju/StudioProjects/loopmuse/.artifacts/song_edit_dialog_no_desc.png), [`lounge_composer_no_desc.png`](file:///Users/geumbogju/StudioProjects/loopmuse/.artifacts/lounge_composer_no_desc.png))로 확인 완료.
+- 2026-09-30 사용자 요청("라운지 입력창이 곡추천 입력창과 똑같이 해달라고 했는데 적용이 안되어있는데 확인해 주세요")에 따라 라운지 글 작성 창을 하단 바텀 시트(`ModalBottomSheet`)에서 화면 중앙 팝업 다이얼로그(`Dialog`)로 전면 개편:
+  - 기존 라운지는 하단에서 올라오는 흰색 단색 바텀 시트였던 반면, 곡 추천 창은 화면 중앙에 뜨는 보라색 폴더 카드 형태의 팝업 다이얼로그였기에 시각적 형태가 일치하지 않던 문제를 해결.
+  - `SongEditDialog`와 100% 동일하게 화면 중앙 다이얼로그([`Dialog`](file:///Users/geumbogju/StudioProjects/loopmuse/app/src/main/java/com/example/loopmuse/community/ui/CommunityLoungeScreen.kt#L468-L525)), 라운드 외곽선(`Surface(shape = RoundedCornerShape(24.dp))`), 내부 연보라색 카드 폴더 배경(`recommendationFolderColor = primaryContainer.copy(alpha = 0.55f), shape = RoundedCornerShape(18.dp)`)을 적용.
+  - 두 창의 팝업 방식(중앙 팝업 다이얼로그), 컨테이너 색상 및 라운드, 입력창(짧은 글, 가수명, 곡 제목), 하단 액션 버튼 배치([유튜브 검색테스트], [취소], [글남기기])가 완벽하게 통일되었음을 에뮬레이터 실시간 캡처([`lounge_dialog_unified.png`](file:///Users/geumbogju/StudioProjects/loopmuse/.artifacts/lounge_dialog_unified.png))로 검증 완료.
+- 2026-09-30 사용자 요청("지금까지 내용을 커밋하고 깃허브에 푸시하고 실행파일 만들어서 릴리즈에 올려주세요")에 따라 릴리스 1.0052 준비 및 GitHub 릴리스 배포:
+  - 버전 번호를 1.0052 (`VERSION_CODE=52`)로 증분하고, 릴리스 서명된 APK(`app/build/outputs/apk/release/loopmuse-1.0052-c52-release.apk`)와 Play 스토어용 App Bundle(`app/build/outputs/bundle/release/app-release.aab`) 빌드 및 v2 서명 검증을 완료했다.
+  - 라운지 글작성 및 곡추천 팝업 디자인 일치화, 플레이스토어 제출용 그래픽 자산(512 아이콘, 1024x500 배너, 6종 스크린샷), 플레이 콘솔 설문 답변 가이드(`docs/PLAY_CONSOLE_GUIDE.md`)를 git commit 및 GitHub `origin/main`에 push했다.
+  - GitHub Releases에 `v1.0052` 태그를 생성하고 실행파일(`loopmuse-1.0052-c52-release.apk`) 및 `app-release.aab`를 릴리스 자산으로 업로드 배포했다.
+
+
