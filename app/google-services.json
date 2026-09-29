@@ -12,7 +12,20 @@
           "package_name": "com.example.loopmuse"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "885512632256-8ranrt8qltuspj9shatmtjur7l81o8kv.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.loopmuse",
+            "certificate_hash": "9c1330abb8094000f350de0bfcc72032eea238ec"
+          }
+        },
+        {
+          "client_id": "885512632256-nhovp9jrkqreorb7e42ji1d8joevsr33.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyBvLpeXZe3vt1i7ZzxuT4RxgzAYnC_MU1Y"
@@ -20,7 +33,49 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "885512632256-nhovp9jrkqreorb7e42ji1d8joevsr33.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:885512632256:android:4d63ffdb795279c73c3a25",
+        "android_client_info": {
+          "package_name": "com.loopmuse7205.music"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "885512632256-pip7stkkm1t8qnu2ima8fqvjki7vqjvs.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.loopmuse7205.music",
+            "certificate_hash": "9c1330abb8094000f350de0bfcc72032eea238ec"
+          }
+        },
+        {
+          "client_id": "885512632256-nhovp9jrkqreorb7e42ji1d8joevsr33.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBvLpeXZe3vt1i7ZzxuT4RxgzAYnC_MU1Y"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "885512632256-nhovp9jrkqreorb7e42ji1d8joevsr33.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }

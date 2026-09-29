@@ -8,6 +8,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.lifecycleScope
+import com.example.loopmuse.auth.AppAuthGate
 import com.example.loopmuse.data.db.AppDatabase
 import com.example.loopmuse.service.alarm.AlarmPlaybackService
 import com.example.loopmuse.ui.AlarmPermissionDialog
@@ -66,12 +67,14 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            HomeScreen()
-            if (showAlarmPermissionReminder) AlarmPermissionDialog(
-                continueLabel = "완료",
-                onReady = { showAlarmPermissionReminder = false },
-                onLater = { showAlarmPermissionReminder = false }
-            )
+            AppAuthGate(this) {
+                HomeScreen()
+                if (showAlarmPermissionReminder) AlarmPermissionDialog(
+                    continueLabel = "완료",
+                    onReady = { showAlarmPermissionReminder = false },
+                    onLater = { showAlarmPermissionReminder = false }
+                )
+            }
         }
     }
 }

@@ -56,8 +56,10 @@ captures/
 !.idea/compiler.xml
 
 # Keystore files
-#*.jks
-#*.keystore
+*.jks
+*.keystore
+keystore.properties
+release-keys/
 
 # External native build folder
 .cxx/
@@ -99,3 +101,6 @@ obj/
 
 # LoopMuse Project Private Docs
 ai_context.md
+
+# Local test screenshots
+.artifacts/*.png

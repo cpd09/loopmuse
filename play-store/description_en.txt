@@ -1,25 +1,11 @@
+LoopMuse remembers the songs you like and have played, and brings music to your alarms.
 
----
+Mark songs you like, revisit tracks you have played, and keep your listening order. Play music stored on your device and use it with daily alarms.
 
-📝 play-store/description_en.txt
+• Keep the current track, playback order, and played-song history for each playlist.
+• Choose sequential, smart, or random playback, with selected songs, liked songs, and single-track repeat.
+• Review played songs and find a track you heard earlier.
+• Use your music with alarms.
+• Discover music online, search for lyrics, and share short song recommendations in the Lounge.
 
-📁 위치: LoopMuse/play-store/description_en.txt
-
-`txt
-LoopMuse – An Offline AI Music Player That Understands You 🎵
-
-LoopMuse reads your mood and plays the right music, just for you.  
-Skip no more—LoopMuse remembers your vibe and curates the sound.
-
-▶️ Key Features
-- Smart shuffle that avoids recently played tracks
-- AI-generated mood-based playlist suggestions
-- Folder-based offline playback
-- Play history reset and custom sorting
-
-✔️ No ads. No login. Just clean design and clear sound.
-
-Feel the music that feels you – only with LoopMuse 🎧
-`
-
----
+Playback of files on your device and alarms are local features. Discovery, lyrics search, and the Lounge need an internet connection. A Google sign-in is required when you first use the app.

@@ -27,12 +27,12 @@ def currentVersionName = String.format('%d.%04d', versionMajor, currentVersionCo
 android {
     namespace 'com.example.loopmuse'
 
-    compileSdk 35
+    compileSdk 37
 
     defaultConfig {
-        applicationId "com.example.loopmuse"
+        applicationId "com.loopmuse7205.music"
         minSdk 24
-        targetSdk 35
+        targetSdk 36
         versionCode currentVersionCode
         versionName currentVersionName
 
@@ -42,11 +42,28 @@ android {
         }
     }
 
+    signingConfigs {
+        release {
+            def keystorePropsFile = rootProject.file('keystore.properties')
+            if (keystorePropsFile.canRead()) {
+                def props = new Properties()
+                keystorePropsFile.withInputStream { props.load(it) }
+                storeFile rootProject.file(props['storeFile'])
+                storePassword props['storePassword']
+                keyAlias props['keyAlias']
+                keyPassword props['keyPassword']
+            }
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            signingConfig signingConfigs.debug
+            def keystorePropsFile = rootProject.file('keystore.properties')
+            if (keystorePropsFile.canRead()) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 
@@ -121,6 +138,9 @@ dependencies {
     implementation platform('com.google.firebase:firebase-bom:32.8.0')
     implementation 'com.google.firebase:firebase-auth-ktx'
     implementation 'com.google.firebase:firebase-firestore-ktx'
+    implementation 'androidx.credentials:credentials:1.6.0'
+    implementation 'androidx.credentials:credentials-play-services-auth:1.6.0'
+    implementation 'com.google.android.libraries.identity.googleid:googleid:1.1.1'
 
     testImplementation 'junit:junit:4.13.2'
 

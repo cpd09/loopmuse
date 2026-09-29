@@ -1,0 +1,163 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function googleUser() {
+      return request.auth != null &&
+        request.auth.token.firebase.sign_in_provider == 'google.com';
+    }
+
+    function profilePath(uid) {
+      return /databases/$(database)/documents/users/$(uid);
+    }
+
+    function isAdmin() {
+      return googleUser() && exists(profilePath(request.auth.uid)) &&
+        get(profilePath(request.auth.uid)).data.get('isAdmin', false) == true;
+    }
+
+    function isBanned() {
+      return exists(profilePath(request.auth.uid)) &&
+        get(profilePath(request.auth.uid)).data.get('isBanned', false) == true;
+    }
+
+    function postPath(postId) {
+      return /databases/$(database)/documents/posts/$(postId);
+    }
+
+    function postOwnerOrAdmin(postId) {
+      return isAdmin() ||
+        (exists(postPath(postId)) &&
+          get(postPath(postId)).data.uid == request.auth.uid);
+    }
+
+    function commentPath(postId, commentId) {
+      return /databases/$(database)/documents/posts/$(postId)/comments/$(commentId);
+    }
+
+    function commentOwnerOrAdmin(postId, commentId) {
+      return isAdmin() ||
+        (exists(commentPath(postId, commentId)) &&
+          get(commentPath(postId, commentId)).data.uid == request.auth.uid);
+    }
+
+    match /users/{uid} {
+      allow get: if googleUser() && (request.auth.uid == uid || isAdmin());
+      allow list: if isAdmin();
+      // The first administrator must be added through Firebase Console or Admin SDK.
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /posts/{postId} {
+      allow read: if googleUser() && !isBanned();
+      allow create: if googleUser() && !isBanned() &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.id == postId &&
+        request.resource.data.message is string &&
+        request.resource.data.message.size() > 0 &&
+        request.resource.data.message.size() <= 500 &&
+        request.resource.data.title is string &&
+        request.resource.data.title.size() <= 100 &&
+        request.resource.data.artist is string &&
+        request.resource.data.artist.size() <= 100 &&
+        request.resource.data.isDeleting == false;
+      allow update: if googleUser() &&
+        (resource.data.uid == request.auth.uid || isAdmin()) &&
+        resource.data.get('isDeleting', false) == false &&
+        request.resource.data.isDeleting == true &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isDeleting']);
+      allow delete: if googleUser() &&
+        (resource.data.uid == request.auth.uid || isAdmin());
+
+      match /comments/{commentId} {
+        allow read: if googleUser() && !isBanned() && exists(postPath(postId)) &&
+          (get(postPath(postId)).data.get('isDeleting', false) == false || postOwnerOrAdmin(postId));
+        allow create: if googleUser() && !isBanned() && exists(postPath(postId)) &&
+          get(postPath(postId)).data.get('isDeleting', false) == false &&
+          request.resource.data.keys().hasOnly([
+            'id', 'postId', 'parentCommentId', 'message', 'uid',
+            'userDisplayName', 'timestamp', 'isDeleted'
+          ]) &&
+          request.resource.data.id == commentId &&
+          request.resource.data.postId == postId &&
+          request.resource.data.parentCommentId is string &&
+          (request.resource.data.parentCommentId == '' ||
+            (exists(commentPath(postId, request.resource.data.parentCommentId)) &&
+              get(commentPath(postId, request.resource.data.parentCommentId)).data.get('isDeleted', false) == false)) &&
+          request.resource.data.uid == request.auth.uid &&
+          request.resource.data.message is string &&
+          request.resource.data.message.size() > 0 &&
+          request.resource.data.message.size() <= 500 &&
+          request.resource.data.userDisplayName is string &&
+          request.resource.data.userDisplayName.size() <= 60 &&
+          request.resource.data.timestamp is int &&
+          request.resource.data.isDeleted == false;
+        allow update: if googleUser() &&
+          (resource.data.uid == request.auth.uid || isAdmin()) &&
+          resource.data.get('isDeleted', false) == false &&
+          request.resource.data.isDeleted == true &&
+          request.resource.data.message == '' &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['message', 'isDeleted']);
+        allow delete: if googleUser() && postOwnerOrAdmin(postId) &&
+          get(postPath(postId)).data.get('isDeleting', false) == true;
+
+        match /votes/{uid} {
+          allow read: if googleUser() && !isBanned() &&
+            exists(postPath(postId)) && exists(commentPath(postId, commentId)) &&
+            (get(commentPath(postId, commentId)).data.get('isDeleted', false) == false ||
+              commentOwnerOrAdmin(postId, commentId) || postOwnerOrAdmin(postId));
+          allow create, update: if googleUser() && !isBanned() &&
+            request.auth.uid == uid &&
+            exists(postPath(postId)) &&
+            get(postPath(postId)).data.get('isDeleting', false) == false &&
+            exists(commentPath(postId, commentId)) &&
+            get(commentPath(postId, commentId)).data.get('isDeleted', false) == false &&
+            request.resource.data.keys().hasOnly(['uid', 'value', 'timestamp']) &&
+            request.resource.data.uid == uid &&
+            request.resource.data.value is int &&
+            request.resource.data.value in [-1, 1] &&
+            request.resource.data.timestamp is int;
+          allow delete: if googleUser() &&
+            (request.auth.uid == uid || isAdmin() ||
+              (commentOwnerOrAdmin(postId, commentId) &&
+                get(commentPath(postId, commentId)).data.get('isDeleted', false) == true) ||
+              (postOwnerOrAdmin(postId) &&
+                get(postPath(postId)).data.get('isDeleting', false) == true));
+        }
+      }
+
+      match /votes/{uid} {
+        allow read: if googleUser() && !isBanned() && exists(postPath(postId)) &&
+          (get(postPath(postId)).data.get('isDeleting', false) == false || postOwnerOrAdmin(postId));
+        allow create, update: if googleUser() && !isBanned() &&
+          request.auth.uid == uid && exists(postPath(postId)) &&
+          get(postPath(postId)).data.get('isDeleting', false) == false &&
+          request.resource.data.keys().hasOnly(['uid', 'value', 'timestamp']) &&
+          request.resource.data.uid == uid &&
+          request.resource.data.value is int &&
+          request.resource.data.value in [-1, 1] &&
+          request.resource.data.timestamp is int;
+        allow delete: if googleUser() &&
+          (request.auth.uid == uid || isAdmin() ||
+            (postOwnerOrAdmin(postId) &&
+              get(postPath(postId)).data.get('isDeleting', false) == true));
+      }
+    }
+
+    match /reports/{reportId} {
+      allow get, list: if isAdmin();
+      allow create: if googleUser() && !isBanned() &&
+        request.resource.data.id == reportId &&
+        request.resource.data.reporterUid == request.auth.uid &&
+        request.resource.data.postId is string &&
+        exists(postPath(request.resource.data.postId)) &&
+        request.resource.data.commentId is string &&
+        (request.resource.data.commentId == '' ||
+          (exists(commentPath(request.resource.data.postId, request.resource.data.commentId)) &&
+            get(commentPath(request.resource.data.postId, request.resource.data.commentId)).data.get('isDeleted', false) == false)) &&
+        request.resource.data.reason is string &&
+        request.resource.data.reason.size() > 0 &&
+        request.resource.data.reason.size() <= 200;
+      allow update, delete: if isAdmin();
+    }
+  }
+}
